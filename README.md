@@ -13,6 +13,8 @@ JobReady/
 
 Clona este repositorio una vez. Abre `backend/` en IntelliJ IDEA y `frontend/` en WebStorm, o usa el editor que prefieras. Ambos directorios pertenecen al mismo repositorio Git: realiza los cambios desde la raíz y coordina con tu equipo el uso de ramas y revisiones.
 
+La versión actual es **v1.0.0**. Consulta los cambios en [CHANGELOG.md](CHANGELOG.md). Para comenzar otra mejora, actualiza `main` y crea una rama nueva desde allí.
+
 ### Frontend
 
 Necesitas Node.js 24 y npm. En la terminal, desde `frontend/`:
