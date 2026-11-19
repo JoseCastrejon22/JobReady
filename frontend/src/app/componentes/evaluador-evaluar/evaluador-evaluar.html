@@ -1,0 +1,90 @@
+<app-panel-rol-layout active="pendientes">
+  <div class="heading">
+    <span class="tag">Paso 2 · Evaluar práctica</span>
+    <h1>{{ simulacion?.carrera?.nombre ?? 'Práctica' }}</h1>
+    <p>
+      Candidato: <strong>{{ simulacion?.usuario?.nombreCompleto ?? '—' }}</strong>
+      @if (simulacion?.fechaFin) { · terminó el {{ simulacion?.fechaFin | date: 'dd/MM/yyyy HH:mm' }} }
+    </p>
+  </div>
+
+  <a class="btn ghost small back" routerLink="/evaluador/pendientes">← Volver a pendientes</a>
+
+  @if (cargando) {
+    <p class="empty" role="status">Cargando práctica…</p>
+  } @else {
+    <div class="evaluate-grid">
+      <section class="box" aria-labelledby="titulo-respuestas">
+        <h2 class="box-title" id="titulo-respuestas">Respuestas del candidato ({{ respuestas.length }})</h2>
+        <div class="box-body answers">
+          @if (tieneVideo) {
+            <article class="answer">
+              <p class="muted">Video enviado por el candidato · {{ simulacion?.duracionSegundos ?? '—' }} s</p>
+              @if (urlVideo) { <video class="candidate-video" [src]="urlVideo" controls playsinline></video> }
+              @else if (errorVideo) { <p class="notice err" role="alert">{{ errorVideo }}</p> }
+              @else { <p class="muted" role="status">Cargando video…</p> }
+            </article>
+          }
+          @for (r of respuestas; track r.idRespuesta; let i = $index) {
+            <article class="answer">
+              <p class="muted">Pregunta {{ i + 1 }} · {{ r.pregunta?.categoria }} · {{ r.duracionSegundos ?? '—' }} s</p>
+              <h3>{{ r.pregunta?.textoPregunta }}</h3>
+              <p class="answer-text">{{ r.textoRespuesta || 'El candidato respondió en video; la transcripción no está disponible.' }}</p>
+            </article>
+          } @empty {
+            @if (!tieneVideo) { <p class="empty">Esta práctica no tiene respuestas registradas.</p> }
+          }
+          <p class="muted">Tiempo promedio por respuesta: <strong>{{ tiempoPromedio }} s</strong> (se calcula automáticamente).</p>
+        </div>
+      </section>
+
+      <section class="box" aria-labelledby="titulo-rubrica">
+        <h2 class="box-title" id="titulo-rubrica">Rúbrica de evaluación</h2>
+        <form class="box-body" (ngSubmit)="enviar()" novalidate>
+          @if (error) { <p class="notice err" role="alert">{{ error }}</p> }
+          <div class="form-grid">
+            <div class="field" [class.invalid]="intentoEnviar && porcentajeInvalido(seguridad)">
+              <label for="seguridad">Seguridad al responder (%)</label>
+              <input id="seguridad" name="seguridad" type="number" min="0" max="100" step="1" inputmode="numeric" [(ngModel)]="seguridad" required>
+              @if (intentoEnviar && porcentajeInvalido(seguridad)) { <span class="error">Ingresa un número entero entre 0 y 100.</span> }
+            </div>
+            <div class="field" [class.invalid]="intentoEnviar && porcentajeInvalido(claridad)">
+              <label for="claridad">Claridad de respuestas (%)</label>
+              <input id="claridad" name="claridad" type="number" min="0" max="100" step="1" inputmode="numeric" [(ngModel)]="claridad" required>
+              @if (intentoEnviar && porcentajeInvalido(claridad)) { <span class="error">Ingresa un número entero entre 0 y 100.</span> }
+            </div>
+            <div class="field" [class.invalid]="intentoEnviar && porcentajeInvalido(dominio)">
+              <label for="dominio">Dominio del tema (%)</label>
+              <input id="dominio" name="dominio" type="number" min="0" max="100" step="1" inputmode="numeric" [(ngModel)]="dominio" required>
+              @if (intentoEnviar && porcentajeInvalido(dominio)) { <span class="error">Ingresa un número entero entre 0 y 100.</span> }
+            </div>
+            <div class="field">
+              <span class="label-like" id="puntaje-label">Puntaje general</span>
+              <output class="score-output" aria-labelledby="puntaje-label" aria-live="polite">{{ puntajeGeneral ?? '—' }}<small> /100</small></output>
+              <span class="hint">Promedio automático de los tres porcentajes.</span>
+            </div>
+            <div class="field full" [class.invalid]="intentoEnviar && textoInvalido(oportunidades)">
+              <label for="oportunidades">Oportunidades de mejora</label>
+              <textarea id="oportunidades" name="oportunidades" [(ngModel)]="oportunidades" required [attr.maxlength]="maxTexto"
+                        placeholder="Aspectos concretos que el candidato puede mejorar."></textarea>
+              <span class="hint">{{ oportunidades.trim().length }} / {{ maxTexto }} caracteres</span>
+              @if (intentoEnviar && textoInvalido(oportunidades)) { <span class="error">Escribe las oportunidades de mejora.</span> }
+            </div>
+            <div class="field full" [class.invalid]="intentoEnviar && textoInvalido(recomendaciones)">
+              <label for="recomendaciones">Recomendaciones</label>
+              <textarea id="recomendaciones" name="recomendaciones" [(ngModel)]="recomendaciones" required [attr.maxlength]="maxTexto"
+                        placeholder="Qué puede hacer el candidato para prepararse mejor."></textarea>
+              <span class="hint">{{ recomendaciones.trim().length }} / {{ maxTexto }} caracteres</span>
+              @if (intentoEnviar && textoInvalido(recomendaciones)) { <span class="error">Escribe las recomendaciones.</span> }
+            </div>
+          </div>
+          <p class="muted">Al enviar se genera automáticamente un PDF con esta retroalimentación para el candidato.</p>
+          <div class="actions">
+            <button class="btn primary" type="submit" [disabled]="enviando || (respuestas.length === 0 && !tieneVideo)">{{ enviando ? 'Enviando…' : 'Enviar evaluación' }}</button>
+            <a class="btn ghost" routerLink="/evaluador/pendientes">Cancelar</a>
+          </div>
+        </form>
+      </section>
+    </div>
+  }
+</app-panel-rol-layout>

@@ -1,5 +1,73 @@
 <app-candidato-layout active="resultados">
   <h1 class="page-title">Mis resultados</h1>
-  <p class="page-intro">Consulta tus informes de desempeño cuando un evaluador publique la retroalimentación.</p>
-  <section class="content-card"><div class="card-heading">Informe de desempeño</div><div class="empty-state"><span class="empty-icon" aria-hidden="true">▥</span><h2>Aún no hay un informe disponible</h2><p>Los puntajes, observaciones y grabaciones con comentarios aparecerán aquí cuando estén vinculados de forma segura a tu cuenta.</p><a routerLink="/historial" class="primary-link">Ir al historial</a></div></section>
+  <p class="page-intro">Consulta tu informe de desempeño y la retroalimentación realizada por el evaluador.</p>
+
+  @if (cargando) {
+    <section class="content-card"><p class="card-body" role="status">Cargando resultado…</p></section>
+  }
+
+  @if (error) {
+    <section class="content-card">
+      <div class="empty-state">
+        <span class="empty-icon" aria-hidden="true">!</span>
+        <h2>{{ error }}</h2>
+        <a routerLink="/historial" class="primary-link">Volver al historial</a>
+      </div>
+    </section>
+  }
+
+  @if (resultado) {
+    <section class="content-card" aria-labelledby="titulo-informe">
+      <div class="card-heading" id="titulo-informe">Informe de desempeño</div>
+      <div class="card-body">
+        <p class="result-date"><strong>Resultados enviados el:</strong>
+          {{ resultado.fechaEvaluacion ? (resultado.fechaEvaluacion | date: "dd/MM/yyyy 'a las' HH:mm") : 'Fecha no registrada' }}</p>
+        @if (resultado.nombreCandidato) { <p><strong>Candidato:</strong> {{ resultado.nombreCandidato }}</p> }
+        <h2>Puntaje general: {{ resultado.puntajeGeneral }}/100</h2>
+        <p><strong>Seguridad al responder:</strong> {{ resultado.seguridadCalificacion | percent: '1.0-0' }}</p>
+        @if (resultado.claridadRespuestas != null) { <p><strong>Claridad de respuestas:</strong> {{ resultado.claridadRespuestas }} %</p> }
+        @if (resultado.dominioTema != null) { <p><strong>Dominio del tema:</strong> {{ resultado.dominioTema }} %</p> }
+        @if (resultado.nivelComunicacion) { <p><strong>Nivel de comunicación:</strong> {{ resultado.nivelComunicacion }}</p> }
+        <p><strong>Tiempo promedio de respuesta:</strong> {{ resultado.tiempoPromedioRespuesta | number: '1.0-1' }} segundos</p>
+        <p><strong>Evaluador:</strong> {{ resultado.nombreEspecialista || 'Sin asignar' }}</p>
+        @if (resultado.oportunidadesMejora) {
+          <h3>Oportunidades de mejora</h3>
+          <p class="result-feedback">{{ resultado.oportunidadesMejora }}</p>
+        }
+        @if (resultado.recomendaciones) {
+          <h3>Recomendaciones</h3>
+          <p class="result-feedback">{{ resultado.recomendaciones }}</p>
+        }
+        @if (resultado.resumenFeedback) {
+          <h3>Respuesta y observaciones del evaluador</h3>
+          <p class="result-feedback">{{ resultado.resumenFeedback }}</p>
+        }
+        @if (resultado.idArchivoPdf) {
+          <h3>Retroalimentación en PDF</h3>
+          @if (cargandoPdf) {
+            <p class="muted" role="status">Cargando PDF…</p>
+          } @else if (errorPdf) {
+            <p role="alert">{{ errorPdf }}</p>
+          } @else if (urlPdf) {
+            <p class="pdf-actions">
+              <a class="primary-link" [href]="urlPdf" target="_blank" rel="noopener">Ver PDF</a>
+              <a class="secondary-link" [href]="urlPdf" [attr.download]="'retroalimentacion-practica-' + resultado.idSimulacion + '.pdf'">Descargar retroalimentación PDF</a>
+            </p>
+          }
+        }
+        <a routerLink="/historial" class="secondary-link">← Volver al historial</a>
+      </div>
+    </section>
+  }
+
+  @if (!resultado && !cargando && !error) {
+    <section class="content-card">
+      <div class="empty-state">
+        <span class="empty-icon" aria-hidden="true">▥</span>
+        <h2>Selecciona una simulación</h2>
+        <p>Ingresa desde tu historial para consultar el resultado de una entrevista evaluada.</p>
+        <a routerLink="/historial" class="primary-link">Ir al historial</a>
+      </div>
+    </section>
+  }
 </app-candidato-layout>

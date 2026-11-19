@@ -1,11 +1,13 @@
 package com.jobready.web.controladores;
 
 import com.jobready.web.entidades.Usuario;
+import com.jobready.web.dtos.UsuarioActualDTO;
 import com.jobready.web.dtos.UsuarioDTO;
 import com.jobready.web.servicios.UsuarioServicio;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import java.util.List;
 
 @RestController
@@ -20,6 +22,13 @@ public class UsuarioController {
         return usuarioServicio.insertar(usuarioDTO.convertirAEntidad());
     }
 
+    /** Cuenta del candidato conectado. La anotación del método reemplaza la restricción ADMIN de la clase. */
+    @GetMapping("/usuario/actual")
+    @PreAuthorize("hasRole('CANDIDATO')")
+    public UsuarioActualDTO obtenerActual(Authentication authentication) {
+        return usuarioServicio.obtenerActual(authentication.getName());
+    }
+
     @GetMapping("/usuarios")
     public List<Usuario> listar() {
         return usuarioServicio.listar();
@@ -31,7 +40,13 @@ public class UsuarioController {
     }
 
     @PatchMapping("/usuario/{id}/desactivar")
-    public Usuario desactivar(@PathVariable Integer id) {
-        return usuarioServicio.desactivar(id);
+    public Usuario desactivar(@PathVariable Integer id, Authentication authentication) {
+        return usuarioServicio.desactivar(id, authentication.getName());
+    }
+
+    /** US12: reactivar una cuenta suspendida. */
+    @PatchMapping("/usuario/{id}/activar")
+    public Usuario activar(@PathVariable Integer id) {
+        return usuarioServicio.activar(id);
     }
 }

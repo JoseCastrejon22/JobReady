@@ -1,11 +1,16 @@
 package com.jobready.web.controladores;
 
 import com.jobready.web.entidades.Simulacion;
+import com.jobready.web.dtos.EnvioEntrevistaDTO;
 import com.jobready.web.dtos.SimulacionDTO;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.web.multipart.MultipartFile;
 import com.jobready.web.servicios.SimulacionServicio;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import java.util.List;
 
 @RestController
@@ -21,9 +26,54 @@ public class SimulacionController {
     }
 
     @GetMapping("/simulaciones")
-    @PreAuthorize("hasAnyRole('ADMIN', 'CANDIDATO', 'EVALUADOR')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EVALUADOR')") // el candidato usa /simulaciones/mias
     public List<Simulacion> listar() {
         return simulacionServicio.listar();
+    }
+
+    /** US15 / US24: prácticas terminadas que esperan evaluación. */
+    @GetMapping("/simulaciones/pendientes")
+    @PreAuthorize("hasAnyRole('ADMIN', 'EVALUADOR')")
+    public List<Simulacion> listarPendientes(Authentication authentication) {
+        boolean esAdmin = authentication.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+        // El administrador ve toda la cola; cada evaluador, las asignadas a él y las sin asignar.
+        return esAdmin
+                ? simulacionServicio.listarPendientesDeEvaluacion()
+                : simulacionServicio.listarPendientesDeEvaluacionPara(authentication.getName());
+    }
+
+    /** Historial del candidato: solo sus propias simulaciones, tomando el usuario del token JWT. */
+    @GetMapping("/simulaciones/mias")
+    @PreAuthorize("hasRole('CANDIDATO')")
+    public List<Simulacion> listarMias(Authentication authentication) {
+        return simulacionServicio.listarPorUsuario(authentication.getName());
+    }
+
+    /** Historial del candidato con el video enviado y el estado de revisión de cada práctica. */
+    @GetMapping("/simulaciones/mias/envios")
+    @PreAuthorize("hasRole('CANDIDATO')")
+    public List<EnvioEntrevistaDTO> listarMisEnvios(Authentication authentication) {
+        return simulacionServicio.listarEnviosPorUsuario(authentication.getName());
+    }
+
+    /** El candidato envía la grabación de su entrevista para que un evaluador la revise. */
+    @PostMapping(value = "/simulacion/enviar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasRole('CANDIDATO')")
+    @ResponseStatus(HttpStatus.CREATED)
+    public EnvioEntrevistaDTO enviar(@RequestParam("video") MultipartFile video,
+                                     @RequestParam("idCarrera") Integer idCarrera,
+                                     @RequestParam("duracionSegundos") Integer duracionSegundos,
+                                     Authentication authentication) {
+        return simulacionServicio.enviarEntrevista(authentication.getName(), idCarrera, duracionSegundos, video);
+    }
+
+    /** Revisiones pendientes: el administrador elimina la entrevista enviada y su video. */
+    @DeleteMapping("/simulacion/{id}/envio")
+    @PreAuthorize("hasRole('ADMIN')")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void eliminarEnvioPendiente(@PathVariable Integer id) {
+        simulacionServicio.eliminarEnvioPendiente(id);
     }
 
     @PutMapping("/simulacion/{id}")
