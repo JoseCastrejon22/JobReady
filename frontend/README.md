@@ -49,7 +49,7 @@ Los precios de `/planes` siguen el diseño recibido: S/29, S/59 y S/99 al mes. L
 
 ## Para continuar el frontend
 
-Angular Material ya está instalado y su tema está en `src/material-theme.scss`. La demo independiente `admin-preguntas.html`, `admin-preguntas.css` y `admin-preguntas.js` permite revisar la interfaz de administración de preguntas; usa almacenamiento local del navegador y todavía no está conectada a Angular ni al backend.
+Angular Material ya está instalado y su tema está en `src/material-theme.scss`.
 
 El componente `historial-component/` recibido del equipo conserva registros de ejemplo y se puede ver en `/historial-prototipo`. La ruta `/historial` corresponde al historial del candidato autenticado. Los componentes `comparacion-component/`, `iniciar-prueba/` y `organizar-sesion-component/` recibidos del equipo siguen como prototipos sin ruta.
 
