@@ -57,6 +57,6 @@ Al ejecutar Angular en `http://localhost:4200`, configura `FRONTEND_URL=http://l
 
 ## Publicación en GitHub Pages
 
-El flujo `.github/workflows/pages.yml`, situado en la raíz del repositorio, compila Angular con la base `/JobReady/` y publica el resultado cuando se actualiza `main`. El origen de Pages debe ser **GitHub Actions** en Settings → Pages. El enlace previsto es https://josespgclan-ops.github.io/JobReady/.
+El flujo `.github/workflows/pages.yml`, situado en la raíz del repositorio, compila Angular con la base `/JobReady/` y publica el resultado cuando se actualiza `main`. El origen de Pages debe ser **GitHub Actions** en Settings → Pages. El enlace previsto es https://JoseCastrejon22.github.io/JobReady/.
 
 Para comprobar la compilación destinada a Pages ejecuta `npm run build -- --base-href /JobReady/`. Las rutas abiertas directamente usan una página 404 de respaldo: GitHub Pages puede responder con estado HTTP 404 aunque Angular muestre la pantalla.
