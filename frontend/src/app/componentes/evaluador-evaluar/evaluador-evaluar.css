@@ -8,3 +8,9 @@
 .candidate-video{display:block;width:100%;max-height:360px;background:#111;border-radius:10px}
 .label-like{display:block;font-weight:700;font-size:.88rem;color:#25364b;margin-bottom:6px}
 .score-output{display:block;font:800 1.9rem/1.1 Arial,sans-serif;color:#2b77f2;padding:6px 0}.score-output small{font-size:.9rem;color:#516071}
+.rubric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px 14px;margin-top:8px}
+.rubric-grid .full{grid-column:1/-1}
+.rubric-grid mat-form-field{width:100%}
+.score{display:grid;align-content:start;padding-bottom:16px}
+.score .hint{color:#617085;font-size:.8rem}
+.btn-spinner{display:inline-block;vertical-align:middle;margin-right:6px}

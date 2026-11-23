@@ -3,8 +3,8 @@ export interface AuthRequest {
   password: string;
 }
 
+/** El JWT no viaja en el cuerpo: se lee de la cabecera Authorization de la respuesta. */
 export interface AuthResponse {
-  jwt: string;
   roles: string[];
 }
 

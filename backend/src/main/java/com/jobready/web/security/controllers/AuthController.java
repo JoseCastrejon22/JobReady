@@ -42,6 +42,6 @@ public class AuthController {
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
-        return ResponseEntity.ok().headers(headers).body(new AuthResponseDTO(token, roles));
+        return ResponseEntity.ok().headers(headers).body(new AuthResponseDTO(roles));
     }
 }
