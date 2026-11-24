@@ -50,3 +50,23 @@ export interface ResultadoSimulacion {
   resumenFeedback: string;
   nombreEspecialista: string;
 }
+
+export interface EntrevistaRevision {
+  idSimulacion: number;
+  candidato: string;
+  carrera: string;
+  fechaInicio: string;
+  estado: string;
+}
+
+export interface ObservacionVideo {
+  idObservacion: number;
+  segundo: number;
+  comentario: string;
+}
+
+export interface VideoRevision {
+  idArchivo: number;
+  url: string;
+  observaciones: ObservacionVideo[];
+}

@@ -6,6 +6,7 @@ import com.jobready.web.servicios.SimulacionServicio;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import java.security.Principal;
 import java.util.List;
 
 @RestController
@@ -28,8 +29,8 @@ public class SimulacionController {
 
     @PutMapping("/simulacion/{id}")
     @PreAuthorize("hasRole('CANDIDATO')")
-    public Simulacion actualizar(@PathVariable Integer id, @RequestBody SimulacionDTO simulacionDTO) {
-        return simulacionServicio.actualizar(id, simulacionDTO.convertirAEntidad());
+    public Simulacion actualizar(@PathVariable Integer id, @RequestBody SimulacionDTO simulacionDTO, Principal usuario) {
+        return simulacionServicio.actualizar(id, simulacionDTO.convertirAEntidad(), usuario.getName());
     }
 
     @DeleteMapping("/simulacion/{id}")

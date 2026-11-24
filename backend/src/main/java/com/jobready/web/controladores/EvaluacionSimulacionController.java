@@ -7,6 +7,8 @@ import com.jobready.web.servicios.EvaluacionSimulacionServicio;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import java.security.Principal;
 import java.util.List;
 
 @RestController
@@ -30,21 +32,23 @@ public class EvaluacionSimulacionController {
     @PutMapping("/evaluacion-simulacion/{id}")
     @PreAuthorize("hasRole('EVALUADOR')")
     public EvaluacionSimulacion actualizar(@PathVariable Integer id,
-                                           @RequestBody EvaluacionSimulacionDTO evaluacionSimulacionDTO) {
-        return evaluacionSimulacionServicio.actualizar(id, evaluacionSimulacionDTO.convertirAEntidad());
+                                           @RequestBody EvaluacionSimulacionDTO evaluacionSimulacionDTO,
+                                           Principal usuario) {
+        return evaluacionSimulacionServicio.actualizar(id, evaluacionSimulacionDTO.convertirAEntidad(), usuario.getName());
     }
 
     @DeleteMapping("/evaluacion-simulacion/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'EVALUADOR')")
-    public void eliminar(@PathVariable Integer id) {
-        evaluacionSimulacionServicio.eliminar(id);
+    public void eliminar(@PathVariable Integer id, Authentication usuario) {
+        boolean administrador = usuario.getAuthorities().stream().anyMatch(rol -> rol.getAuthority().equals("ROLE_ADMIN"));
+        evaluacionSimulacionServicio.eliminar(id, usuario.getName(), administrador);
     }
 
     @GetMapping("/resultado/{idSimulacion}")
     @PreAuthorize("hasRole('CANDIDATO')")
     public ResultadoSimulacionDTO obtenerResultado(
-            @PathVariable Integer idSimulacion){
-        return evaluacionSimulacionServicio.obtenerResultado(idSimulacion);
+            @PathVariable Integer idSimulacion, Principal usuario) {
+        return evaluacionSimulacionServicio.obtenerResultado(idSimulacion, usuario.getName());
     }
 
 }

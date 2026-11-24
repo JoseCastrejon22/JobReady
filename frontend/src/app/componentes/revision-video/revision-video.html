@@ -1,0 +1,46 @@
+<section class="revision">
+  <h2>Observaciones del video</h2>
+  @if (cargando()) { <p role="status">Cargando videos…</p> }
+  @if (error()) { <p role="alert">{{ error() }}</p> }
+  @if (aviso()) { <p role="status">{{ aviso() }}</p> }
+  @if (!cargando() && !error() && !videos().length) {
+    <p>Esta entrevista todavía no tiene videos registrados.</p>
+  }
+
+  @for (video of videos(); track video.idArchivo; let numero = $index) {
+    <article class="video">
+      <div>
+        <h3>Video {{ numero + 1 }}</h3>
+        <video #reproductor [src]="video.url" controls playsinline preload="metadata"
+               (error)="error.set('No se pudo cargar la grabación.')"
+               aria-label="Grabación de la entrevista"></video>
+      </div>
+      <div>
+        @if (puedeComentar()) {
+          <form (ngSubmit)="guardar(video, reproductor, comentario)">
+            <label [for]="'comentario-' + video.idArchivo">Comentario</label>
+            <textarea #comentario [id]="'comentario-' + video.idArchivo" rows="3" maxlength="1000"
+                      [disabled]="guardando() === video.idArchivo" required
+                      placeholder="Pausa el video donde quieras anclar tu observación"></textarea>
+            <button type="submit" class="anclar" [disabled]="guardando() !== null">
+              {{ guardando() === video.idArchivo ? 'Guardando…' : 'Anclar comentario' }}
+            </button>
+          </form>
+        }
+        <ul class="observaciones">
+          @for (nota of video.observaciones; track nota.idObservacion) {
+            <li>
+              <button type="button" class="marca" (click)="reproducirDesde(reproductor, nota.segundo)"
+                      [attr.aria-label]="'Reproducir desde ' + formatearTiempo(nota.segundo)">
+                {{ formatearTiempo(nota.segundo) }}
+              </button>
+              <p>{{ nota.comentario }}</p>
+            </li>
+          } @empty {
+            <li>Todavía no hay observaciones.</li>
+          }
+        </ul>
+      </div>
+    </article>
+  }
+</section>

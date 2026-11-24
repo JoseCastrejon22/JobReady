@@ -3,7 +3,10 @@ package com.jobready.web.servicios;
 import com.jobready.web.entidades.Simulacion;
 import com.jobready.web.repositorios.SimulacionRepositorio;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 import java.io.Serializable;
 import java.util.List;
 
@@ -20,10 +23,10 @@ public class SimulacionServicio implements Serializable {
         return simulacionRepositorio.findAll();
     }
 
-    public Simulacion actualizar(Integer id, Simulacion datos) {
-        Simulacion simulacion = simulacionRepositorio.findById(id)
-                .orElseThrow(() -> new RuntimeException("No existe la simulacion con id " + id));
-        simulacion.setUsuario(datos.getUsuario());
+    @Transactional
+    public Simulacion actualizar(Integer id, Simulacion datos, String username) {
+        Simulacion simulacion = simulacionRepositorio.findByIdSimulacionAndUsuario_Username(id, username)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No existe esa simulación."));
         simulacion.setCarrera(datos.getCarrera());
         simulacion.setSesion(datos.getSesion());
         simulacion.setNumeroSimulacion(datos.getNumeroSimulacion());

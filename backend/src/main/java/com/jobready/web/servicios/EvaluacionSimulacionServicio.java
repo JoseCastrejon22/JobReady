@@ -3,7 +3,10 @@ package com.jobready.web.servicios;
 import com.jobready.web.entidades.EvaluacionSimulacion;
 import com.jobready.web.repositorios.EvaluacionSimulacionRepositorio;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 import java.io.Serializable;
 import java.util.List;
 import com.jobready.web.dtos.ResultadoSimulacionDTO;
@@ -22,14 +25,12 @@ public class EvaluacionSimulacionServicio implements Serializable {
         return evaluacionSimulacionRepositorio.findAll();
     }
 
-    public ResultadoSimulacionDTO obtenerResultado(Integer idSimulacion) {
+    public ResultadoSimulacionDTO obtenerResultado(Integer idSimulacion, String username) {
         EvaluacionSimulacion evaluacion =
                 evaluacionSimulacionRepositorio
-                        .findBySimulacion_IdSimulacion(idSimulacion);
+                        .findBySimulacion_IdSimulacionAndSimulacion_Usuario_Username(idSimulacion, username)
+                        .orElseThrow(this::evaluacionInaccesible);
         String nombreEspecialista = null;
-        if (evaluacion == null) {
-            throw new RuntimeException("No existe una evaluacion");
-        }
         if (evaluacion.getEspecialista() != null) {
             nombreEspecialista = evaluacion.getEspecialista().getNombreCompleto();
         }
@@ -44,25 +45,33 @@ public class EvaluacionSimulacionServicio implements Serializable {
         );
     }
 
-    public EvaluacionSimulacion actualizar(Integer id, EvaluacionSimulacion datos) {
-        EvaluacionSimulacion evaluacion = evaluacionSimulacionRepositorio.findById(id)
-                .orElseThrow(() -> new RuntimeException("No existe la evaluacion con id " + id));
-        evaluacion.setSimulacion(datos.getSimulacion());
+    @Transactional
+    public EvaluacionSimulacion actualizar(Integer id, EvaluacionSimulacion datos, String username) {
+        EvaluacionSimulacion evaluacion = buscarAsignada(id, username);
         evaluacion.setPuntajeGeneral(datos.getPuntajeGeneral());
         evaluacion.setNivelComunicacion(datos.getNivelComunicacion());
         evaluacion.setTiempoPromedioRespuesta(datos.getTiempoPromedioRespuesta());
         evaluacion.setSeguridadCalificacion(datos.getSeguridadCalificacion());
         evaluacion.setFeedbackResumen(datos.getFeedbackResumen());
         evaluacion.setEvaluadoPorEspecialista(datos.getEvaluadoPorEspecialista());
-        evaluacion.setEspecialista(datos.getEspecialista());
         return evaluacionSimulacionRepositorio.save(evaluacion);
     }
 
-    public void eliminar(Integer id) {
-        if (!evaluacionSimulacionRepositorio.existsById(id)) {
-            throw new RuntimeException("No existe la evaluacion con id " + id);
-        }
-        evaluacionSimulacionRepositorio.deleteById(id);
+    @Transactional
+    public void eliminar(Integer id, String username, boolean administrador) {
+        EvaluacionSimulacion evaluacion = administrador
+                ? evaluacionSimulacionRepositorio.findById(id).orElseThrow(this::evaluacionInaccesible)
+                : buscarAsignada(id, username);
+        evaluacionSimulacionRepositorio.delete(evaluacion);
+    }
+
+    private EvaluacionSimulacion buscarAsignada(Integer id, String username) {
+        return evaluacionSimulacionRepositorio.findByIdEvaluacionAndEspecialista_Username(id, username)
+                .orElseThrow(this::evaluacionInaccesible);
+    }
+
+    private ResponseStatusException evaluacionInaccesible() {
+        return new ResponseStatusException(HttpStatus.NOT_FOUND, "No existe una evaluación disponible.");
     }
 }
 

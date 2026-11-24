@@ -1,7 +1,7 @@
 import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { ResultadoSimulacion } from '../modelos/api-modelos';
+import { EntrevistaRevision, ObservacionVideo, ResultadoSimulacion, VideoRevision } from '../modelos/api-modelos';
 import { API_BASE_URL } from './api-configuracion';
 import { ApiRecurso, RegistroApi } from './api-recurso';
 
@@ -31,6 +31,19 @@ export class SimulacionesServicio {
   eliminarEvaluacion<T extends RegistroApi>(id: number): Observable<void> { return this.recurso<T>('evaluaciones-simulacion', 'evaluacion-simulacion').eliminar(id); }
   obtenerResultado(idSimulacion: number): Observable<ResultadoSimulacion> {
     return this.http.get<ResultadoSimulacion>(`${API_BASE_URL}/resultado/${idSimulacion}`);
+  }
+
+  listarEntrevistasParaRevision(): Observable<EntrevistaRevision[]> {
+    return this.http.get<EntrevistaRevision[]>(`${API_BASE_URL}/evaluaciones-simulacion/revisiones`);
+  }
+
+  obtenerRevisionVideo(idSimulacion: number): Observable<{ videos: VideoRevision[] }> {
+    return this.http.get<{ videos: VideoRevision[] }>(`${API_BASE_URL}/simulacion/${idSimulacion}/revision-video`);
+  }
+
+  guardarObservacion(idSimulacion: number, idArchivo: number, segundo: number, comentario: string): Observable<ObservacionVideo> {
+    return this.http.post<ObservacionVideo>(`${API_BASE_URL}/simulacion/${idSimulacion}/observaciones-video`,
+      { idArchivo, segundo, comentario });
   }
 
   listarSesiones<T extends RegistroApi>(): Observable<T[]> { return this.recurso<T>('sesiones-programadas', 'sesion-programada').listar(); }

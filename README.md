@@ -38,6 +38,12 @@ Desde `backend/`, ejecuta `./mvnw spring-boot:run` en macOS/Linux o `.\mvnw.cmd 
 
 Para enviar los enlaces de recuperación, incorpora la sección de correo de `application-example.properties` a tu configuración y define `SMTP_HOST`, `SMTP_USERNAME` y `SMTP_PASSWORD`. El ejemplo usa el puerto 587 con STARTTLS y el usuario SMTP como remitente. Usa `SMTP_FROM` si tu proveedor requiere otro remitente autorizado. Define `RESET_FRONTEND_URL=http://localhost:4200` para el desarrollo con `npm start`. En producción usa la URL pública completa del frontend, incluido el subdirectorio `/JobReady/` si corresponde.
 
+### US05 · Observaciones con marcas de tiempo
+
+En **Evaluador → Entrevistas asignadas**, abre una entrevista, pausa el video y pulsa **Anclar comentario** después de escribir tu observación. El candidato la encuentra en **Historial → Ver resultado**. Ambos pueden pulsar una marca para reproducir el video desde ese momento.
+
+El flujo usa la asignación existente en `evaluaciones_simulacion` y los videos registrados en `archivos_simulacion`. Para preparar una entrevista con el API existente, registra el video con `POST /api/archivo-simulacion`, enviando `idSimulacion`, `tipoArchivo` (por ejemplo, `video/mp4`) y `urlAlmacenamiento` con una URL que sirva el archivo directamente. La grabación local de la pantalla de práctica todavía requiere que el archivo se aloje y se registre para poder revisarlo.
+
 ## Publicación
 
 GitHub Actions compila y publica el frontend cuando se actualiza `main`, si el origen de GitHub Pages está configurado como **GitHub Actions**. El sitio previsto es https://josespgclan-ops.github.io/JobReady/. GitHub Pages solo aloja el frontend; el backend y la base de datos necesitan ejecutarse o desplegarse por separado.

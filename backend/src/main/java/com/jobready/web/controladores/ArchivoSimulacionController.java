@@ -6,6 +6,7 @@ import com.jobready.web.servicios.ArchivoSimulacionServicio;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import java.util.List;
 
 @RestController
@@ -16,19 +17,24 @@ public class ArchivoSimulacionController {
 
     @PostMapping("/archivo-simulacion")
     @PreAuthorize("hasAnyRole('CANDIDATO', 'EVALUADOR')")
-    public ArchivoSimulacion insertar(@RequestBody ArchivoSimulacionDTO archivoSimulacionDTO) {
-        return archivoSimulacionServicio.insertar(archivoSimulacionDTO.convertirAEntidad());
+    public ArchivoSimulacion insertar(@RequestBody ArchivoSimulacionDTO archivoSimulacionDTO, Authentication usuario) {
+        return archivoSimulacionServicio.insertar(archivoSimulacionDTO.convertirAEntidad(),
+                usuario.getName(), tieneRol(usuario, "ROLE_EVALUADOR"));
     }
 
     @GetMapping("/archivos-simulacion")
     @PreAuthorize("hasAnyRole('ADMIN', 'EVALUADOR')")
-    public List<ArchivoSimulacion> listar() {
-        return archivoSimulacionServicio.listar();
+    public List<ArchivoSimulacion> listar(Authentication usuario) {
+        return archivoSimulacionServicio.listar(usuario.getName(), tieneRol(usuario, "ROLE_ADMIN"));
     }
 
     @DeleteMapping("/archivo-simulacion/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'CANDIDATO')")
-    public void eliminar(@PathVariable Integer id) {
-        archivoSimulacionServicio.eliminar(id);
+    public void eliminar(@PathVariable Integer id, Authentication usuario) {
+        archivoSimulacionServicio.eliminar(id, usuario.getName(), tieneRol(usuario, "ROLE_ADMIN"));
+    }
+
+    private boolean tieneRol(Authentication usuario, String autoridad) {
+        return usuario.getAuthorities().stream().anyMatch(rol -> rol.getAuthority().equals(autoridad));
     }
 }
