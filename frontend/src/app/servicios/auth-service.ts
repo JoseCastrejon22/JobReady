@@ -24,6 +24,14 @@ export class AuthService {
     return this.http.post(`${API_BASE_URL}/registro`, datos);
   }
 
+  recuperarPassword(email: string): Observable<void> {
+    return this.http.post<void>(`${API_BASE_URL}/auth/recuperar-password`, { email });
+  }
+
+  restablecerPassword(token: string, password: string): Observable<void> {
+    return this.http.post<void>(`${API_BASE_URL}/auth/restablecer-password`, { token, password });
+  }
+
   cerrarSesion(): void {
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(ROLES_KEY);

@@ -1,5 +1,7 @@
-import { Component } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Component, inject } from '@angular/core';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import { ResultadoSimulacion } from '../../modelos/api-modelos';
+import { SimulacionesServicio } from '../../servicios/simulaciones-servicio';
 import { CandidatoLayoutComponente } from '../candidato-layout/candidato-layout';
 
 @Component({
