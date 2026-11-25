@@ -16,7 +16,10 @@
         </div>
         @if (error) { <p class="error" role="alert">{{ error }}</p> }
         <button type="submit" class="btn-submit" [disabled]="cargando">{{ cargando ? 'INGRESANDO…' : 'INGRESAR' }}</button>
-        <div class="register-container"><p>¿No tienes una cuenta?</p><a routerLink="/registro" class="register-link">Regístrate</a></div>
+        <div class="register-container">
+          <p><a routerLink="/recuperar-password" class="register-link">Olvidé mi contraseña</a></p>
+          <p>¿No tienes una cuenta?</p><a routerLink="/registro" class="register-link">Regístrate</a>
+        </div>
       </form>
     </div>
   </section>

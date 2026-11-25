@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { API_BASE_URL } from './api-configuracion';
 import { ApiRecurso, RegistroApi } from './api-recurso';
-import { ArchivoSimulacion, EnvioEntrevista, ResultadoSimulacion, SimulacionResumen } from '../modelos/api-modelos';
+import { ArchivoSimulacion, EnvioEntrevista, PreguntaRespondida, ResultadoSimulacion, SimulacionResumen } from '../modelos/api-modelos';
 
 @Injectable({ providedIn: 'root' })
 export class SimulacionesServicio {
@@ -43,13 +43,20 @@ export class SimulacionesServicio {
     return this.http.get<EnvioEntrevista[]>(`${API_BASE_URL}/simulaciones/mias/envios`);
   }
 
-  /** Envía la grabación; el backend crea la práctica, guarda el video y asigna un evaluador. */
-  enviarEntrevista(video: Blob, idCarrera: number, duracionSegundos: number): Observable<EnvioEntrevista> {
+  /**
+   * Envía la grabación; el backend crea la práctica, guarda el video y asigna un evaluador.
+   * Las preguntas mostradas viajan como parte JSON para que el evaluador vea las mismas, en el mismo orden.
+   */
+  enviarEntrevista(video: Blob, idCarrera: number, duracionSegundos: number,
+                   preguntas: PreguntaRespondida[] = []): Observable<EnvioEntrevista> {
     const extension = video.type.includes('mp4') ? 'mp4' : 'webm';
     const datos = new FormData();
     datos.append('video', video, `entrevista.${extension}`);
     datos.append('idCarrera', String(idCarrera));
     datos.append('duracionSegundos', String(duracionSegundos));
+    if (preguntas.length) {
+      datos.append('preguntas', new Blob([JSON.stringify(preguntas)], { type: 'application/json' }));
+    }
     return this.http.post<EnvioEntrevista>(`${API_BASE_URL}/simulacion/enviar`, datos);
   }
 

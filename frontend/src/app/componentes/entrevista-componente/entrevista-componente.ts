@@ -2,10 +2,16 @@ import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, View
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { Carrera } from '../../modelos/api-modelos';
+import { Carrera, PreguntaEntrevista, PreguntaRespondida } from '../../modelos/api-modelos';
 import { CarrerasServicio } from '../../servicios/carreras-servicio';
+import { PreguntasServicio } from '../../servicios/preguntas-servicio';
 import { SimulacionesServicio } from '../../servicios/simulaciones-servicio';
 import { CandidatoLayoutComponente } from '../candidato-layout/candidato-layout';
+
+/** Preguntas por simulación: la grabación dura como máximo tres minutos. */
+const MAX_PREGUNTAS = 5;
+/** Tras mostrar una pregunta, la flecha se habilita pasado este tiempo para evitar avances accidentales. */
+const ESPERA_NAVEGACION_MS = 1500;
 
 @Component({
   selector: 'app-entrevista-componente',
@@ -18,6 +24,7 @@ import { CandidatoLayoutComponente } from '../candidato-layout/candidato-layout'
 export class EntrevistaComponente implements OnInit, OnDestroy {
   private readonly carrerasServicio = inject(CarrerasServicio);
   private readonly simulacionesServicio = inject(SimulacionesServicio);
+  private readonly preguntasServicio = inject(PreguntasServicio);
   private readonly route = inject(ActivatedRoute);
   @ViewChild('vistaPrevia') private vistaPrevia?: ElementRef<HTMLVideoElement>;
   @ViewChild('confirmarFin') private dialogoConfirmar?: ElementRef<HTMLDialogElement>;
@@ -38,6 +45,23 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
   private duracionGrabada = 0;
   protected carreras: Carrera[] = [];
   protected idCarrera: number | null = null;
+  /** Carrera con la que se grabó el video actual; es la que se envía junto con sus preguntas. */
+  private idCarreraGrabada: number | null = null;
+
+  /** Preguntas activas de la carrera seleccionada (banco del que se eligen las de cada simulación). */
+  protected bancoPreguntas: PreguntaEntrevista[] = [];
+  protected cargandoPreguntas = false;
+  protected errorPreguntas = '';
+  private solicitudPreguntas = 0;
+  /** Preguntas elegidas para la grabación en curso, en el orden en que se muestran. */
+  protected preguntasSimulacion: PreguntaEntrevista[] = [];
+  protected indicePregunta = 0;
+  /** Milisegundos desde el inicio de la grabación en que se mostró cada pregunta. */
+  private marcasMs: number[] = [];
+  /** Preguntas mostradas con su tramo del video; se envían con la grabación. */
+  protected preguntasRegistradas: PreguntaRespondida[] = [];
+  protected navegacionBloqueada = false;
+  private esperaNavegacion?: ReturnType<typeof setTimeout>;
   /** La grabación terminó y espera que el candidato confirme el fin de la simulación. */
   protected confirmandoFin = false;
   /** El candidato confirmó el fin de la simulación: ya puede revisar y enviar el video. */
@@ -57,6 +81,28 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
     return this.formatearTiempo(this.duracionGrabada);
   }
 
+  protected get preguntaActual(): PreguntaEntrevista | null {
+    return this.preguntasSimulacion[this.indicePregunta] ?? null;
+  }
+
+  protected get esUltimaPregunta(): boolean {
+    return this.indicePregunta >= this.preguntasSimulacion.length - 1;
+  }
+
+  /** Cuántas preguntas verá el candidato al iniciar la grabación. */
+  protected get totalPreguntasPorMostrar(): number {
+    return Math.min(MAX_PREGUNTAS, this.bancoPreguntas.length);
+  }
+
+  /** Texto de una pregunta registrada (para la revisión antes de enviar). */
+  protected textoPregunta(idPregunta: number): string {
+    return this.preguntasSimulacion.find((p) => p.idPregunta === idPregunta)?.textoPregunta ?? '';
+  }
+
+  protected formatearSegundos(total: number): string {
+    return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
+  }
+
   private formatearTiempo(totalSegundos: number): string {
     const minutos = Math.floor(totalSegundos / 60).toString().padStart(2, '0');
     const segundos = (totalSegundos % 60).toString().padStart(2, '0');
@@ -69,10 +115,52 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
       next: (carreras) => {
         this.carreras = carreras.filter((c) => c.activo !== false);
         const preseleccionada = Number(carrera);
-        if (carrera && this.carreras.some((c) => c.idCarrera === preseleccionada)) this.idCarrera = preseleccionada;
+        if (carrera && this.carreras.some((c) => c.idCarrera === preseleccionada)) {
+          this.idCarrera = preseleccionada;
+          this.cargarPreguntas(preseleccionada);
+        }
       },
       error: () => this.errorEnvio = 'No se pudieron cargar las carreras. Comprueba la conexión con el servidor.',
     });
+  }
+
+  protected cambiarCarrera(idCarrera: number | null): void {
+    this.idCarrera = idCarrera;
+    this.cargarPreguntas(idCarrera);
+  }
+
+  /** Carga las preguntas activas de la carrera; solo cuenta la respuesta de la última solicitud. */
+  private cargarPreguntas(idCarrera: number | null): void {
+    const solicitud = ++this.solicitudPreguntas;
+    this.bancoPreguntas = [];
+    this.errorPreguntas = '';
+    if (!idCarrera) {
+      this.cargandoPreguntas = false;
+      return;
+    }
+    this.cargandoPreguntas = true;
+    this.preguntasServicio.listarPorCarrera(idCarrera).subscribe({
+      next: (preguntas) => {
+        if (solicitud !== this.solicitudPreguntas) return;
+        this.bancoPreguntas = preguntas.filter((p) => p.activo !== false);
+        this.cargandoPreguntas = false;
+      },
+      error: () => {
+        if (solicitud !== this.solicitudPreguntas) return;
+        this.cargandoPreguntas = false;
+        this.errorPreguntas = 'No se pudieron cargar las preguntas de esta carrera. Vuelve a seleccionarla para reintentar.';
+      },
+    });
+  }
+
+  /** Elige al azar hasta MAX_PREGUNTAS preguntas distintas del banco (Fisher-Yates). */
+  private elegirPreguntas(): PreguntaEntrevista[] {
+    const copia = [...this.bancoPreguntas];
+    for (let i = copia.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copia[i], copia[j]] = [copia[j], copia[i]];
+    }
+    return copia.slice(0, MAX_PREGUNTAS);
   }
 
   protected async preparar(): Promise<void> {
@@ -116,6 +204,14 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
 
   protected iniciarGrabacion(): void {
     if (!this.flujo || this.grabando || !this.preparado) return;
+    if (!this.idCarrera) {
+      this.mensaje = 'Selecciona la carrera de la entrevista para recibir sus preguntas antes de grabar.';
+      return;
+    }
+    if (this.cargandoPreguntas) {
+      this.mensaje = 'Cargando las preguntas de la carrera… inténtalo en un momento.';
+      return;
+    }
     if (this.videoGrabado) {
       URL.revokeObjectURL(this.videoGrabado);
       this.videoGrabado = '';
@@ -128,6 +224,11 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
     this.errorEnvio = '';
     this.fragmentos = [];
     this.segundosRestantes = 180;
+    this.preguntasRegistradas = [];
+    this.preguntasSimulacion = this.elegirPreguntas();
+    this.indicePregunta = 0;
+    this.marcasMs = [];
+    this.idCarreraGrabada = this.idCarrera;
     const tipo = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
       .find((formato) => MediaRecorder.isTypeSupported(formato));
     try {
@@ -142,7 +243,6 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
           const tipo = (this.grabador?.mimeType || 'video/webm').split(';')[0];
           this.blobGrabado = new Blob(this.fragmentos, { type: tipo });
           this.videoGrabado = URL.createObjectURL(this.blobGrabado);
-          this.duracionGrabada = Math.min(180, Math.max(1, Math.round((Date.now() - this.inicioGrabacion) / 1000)));
           this.mensaje = 'Grabación detenida. Confirma si deseas finalizar la simulación.';
           this.abrirConfirmacion();
         } else {
@@ -152,14 +252,67 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
       this.grabador.start();
       this.inicioGrabacion = Date.now();
       this.grabando = true;
-      this.mensaje = 'Grabando respuesta…';
+      if (this.preguntasSimulacion.length) {
+        this.marcasMs = [0];
+        this.bloquearNavegacion();
+        this.mensaje = 'Grabando… responde la pregunta y pulsa la flecha para continuar.';
+      } else {
+        this.mensaje = 'Grabando respuesta…';
+      }
       this.reloj = setInterval(() => {
         this.segundosRestantes -= 1;
         if (this.segundosRestantes <= 0) this.detenerGrabacion();
       }, 1000);
     } catch {
+      this.preguntasSimulacion = [];
       this.mensaje = 'No se pudo iniciar la grabación en este navegador.';
     }
+  }
+
+  /**
+   * Muestra la siguiente pregunta sin tocar el MediaRecorder: la grabación sigue siendo continua.
+   * En la última pregunta, la flecha termina la sección de preguntas y detiene la grabación.
+   */
+  protected siguientePregunta(): void {
+    if (!this.grabando || this.navegacionBloqueada || !this.preguntaActual) return;
+    if (this.esUltimaPregunta) {
+      this.detenerGrabacion();
+      return;
+    }
+    this.marcasMs.push(Date.now() - this.inicioGrabacion);
+    this.indicePregunta += 1;
+    this.bloquearNavegacion();
+  }
+
+  private bloquearNavegacion(): void {
+    this.limpiarEsperaNavegacion();
+    this.navegacionBloqueada = true;
+    this.esperaNavegacion = setTimeout(() => {
+      this.navegacionBloqueada = false;
+      this.esperaNavegacion = undefined;
+    }, ESPERA_NAVEGACION_MS);
+  }
+
+  private limpiarEsperaNavegacion(): void {
+    if (this.esperaNavegacion) clearTimeout(this.esperaNavegacion);
+    this.esperaNavegacion = undefined;
+  }
+
+  /**
+   * Convierte las marcas de las preguntas mostradas en tramos del video (segundos): cada pregunta
+   * va desde que apareció hasta que apareció la siguiente; la última, hasta el final de la grabación.
+   */
+  private registrarTramos(): void {
+    const duracion = this.duracionGrabada;
+    const aSegundos = (ms: number) => Math.min(duracion, Math.max(0, Math.round(ms / 1000)));
+    let finAnterior = 0;
+    this.preguntasRegistradas = this.marcasMs.map((marca, i) => {
+      const inicio = Math.max(finAnterior, aSegundos(marca));
+      const siguiente = this.marcasMs[i + 1];
+      const fin = Math.max(inicio, siguiente === undefined ? duracion : aSegundos(siguiente));
+      finAnterior = fin;
+      return { idPregunta: this.preguntasSimulacion[i].idPregunta, orden: i + 1, segundoInicio: inicio, segundoFin: fin };
+    });
   }
 
   /**
@@ -170,6 +323,11 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
     if (!this.grabando) return;
     this.grabando = false;
     this.limpiarReloj();
+    this.limpiarEsperaNavegacion();
+    this.navegacionBloqueada = false;
+    // La duración y los tramos se calculan en el instante en que termina la grabación.
+    this.duracionGrabada = Math.min(180, Math.max(1, Math.round((Date.now() - this.inicioGrabacion) / 1000)));
+    this.registrarTramos();
     if (this.grabador && this.grabador.state !== 'inactive') this.grabador.stop();
     this.detenerDispositivos();
     this.mensaje = 'Procesando la grabación…';
@@ -206,6 +364,8 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
     this.videoGrabado = '';
     this.blobGrabado = undefined;
     this.duracionGrabada = 0;
+    this.preguntasRegistradas = [];
+    this.preguntasSimulacion = [];
     this.finalizada = false;
     this.segundosRestantes = 180;
     this.mensaje = 'Grabación descartada. Comprueba la cámara y el micrófono para grabar de nuevo.';
@@ -220,19 +380,25 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
   }
 
   protected get puedeEnviar(): boolean {
-    return this.finalizada && !!this.blobGrabado && !!this.idCarrera && !this.enviando && !this.enviado && !this.grabando;
+    return this.finalizada && !!this.blobGrabado && !!this.idCarreraGrabada && !this.enviando && !this.enviado && !this.grabando;
+  }
+
+  /** La carrera queda fija mientras haya una grabación sin enviar: sus preguntas pertenecen a esa carrera. */
+  protected get carreraBloqueada(): boolean {
+    return this.enviando || this.grabando || this.confirmandoFin || (!!this.videoGrabado && !this.enviado);
   }
 
   protected enviarGrabacion(): void {
     if (!this.finalizada || !this.blobGrabado || this.enviando || this.enviado) return;
-    if (!this.idCarrera) {
+    if (!this.idCarreraGrabada) {
       this.errorEnvio = 'Selecciona la carrera de la entrevista antes de enviarla.';
       return;
     }
     this.enviando = true;
     this.errorEnvio = '';
     this.mensajeEnvio = '';
-    this.simulacionesServicio.enviarEntrevista(this.blobGrabado, this.idCarrera, this.duracionGrabada).subscribe({
+    this.simulacionesServicio.enviarEntrevista(this.blobGrabado, this.idCarreraGrabada, this.duracionGrabada,
+      this.preguntasRegistradas).subscribe({
       next: () => {
         this.enviando = false;
         this.enviado = true;
@@ -270,6 +436,7 @@ export class EntrevistaComponente implements OnInit, OnDestroy {
     this.cerrarConfirmacion();
     if (this.grabador?.state === 'recording') this.grabador.stop();
     this.limpiarReloj();
+    this.limpiarEsperaNavegacion();
     this.detenerDispositivos();
     if (this.videoGrabado) URL.revokeObjectURL(this.videoGrabado);
   }

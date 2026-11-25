@@ -21,7 +21,7 @@ public class RespuestaEntrevistaServicio implements Serializable {
     }
 
     public List<RespuestaEntrevista> listarPorSimulacion(Integer idSimulacion) {
-        return respuestaEntrevistaRepositorio.findBySimulacion_IdSimulacion(idSimulacion);
+        return respuestaEntrevistaRepositorio.findOrdenadasPorSimulacion(idSimulacion);
     }
 
     public RespuestaEntrevista actualizar(Integer id, RespuestaEntrevista datos) {

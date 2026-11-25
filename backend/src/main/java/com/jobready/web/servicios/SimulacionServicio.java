@@ -1,14 +1,18 @@
 package com.jobready.web.servicios;
 
 import com.jobready.web.dtos.EnvioEntrevistaDTO;
+import com.jobready.web.dtos.PreguntaRespondidaDTO;
 import com.jobready.web.entidades.ArchivoSimulacion;
 import com.jobready.web.entidades.Carrera;
 import com.jobready.web.entidades.EvaluacionSimulacion;
+import com.jobready.web.entidades.PreguntaEntrevista;
+import com.jobready.web.entidades.RespuestaEntrevista;
 import com.jobready.web.entidades.Simulacion;
 import com.jobready.web.entidades.Usuario;
 import com.jobready.web.repositorios.ArchivoSimulacionRepositorio;
 import com.jobready.web.repositorios.CarreraRepositorio;
 import com.jobready.web.repositorios.EvaluacionSimulacionRepositorio;
+import com.jobready.web.repositorios.PreguntaEntrevistaRepositorio;
 import com.jobready.web.repositorios.RespuestaEntrevistaRepositorio;
 import com.jobready.web.repositorios.SimulacionRepositorio;
 import com.jobready.web.repositorios.UsuarioRepositorio;
@@ -21,15 +25,20 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
 public class SimulacionServicio implements Serializable {
     private static final int DURACION_MAXIMA_SEGUNDOS = 180;
+    /** Tope de preguntas que se registran por simulación (el frontend muestra hasta 5). */
+    private static final int MAX_PREGUNTAS_POR_SIMULACION = 20;
 
     @Autowired
     private SimulacionRepositorio simulacionRepositorio;
@@ -45,6 +54,8 @@ public class SimulacionServicio implements Serializable {
     private ArchivoSimulacionServicio archivoSimulacionServicio;
     @Autowired
     private RespuestaEntrevistaRepositorio respuestaEntrevistaRepositorio;
+    @Autowired
+    private PreguntaEntrevistaRepositorio preguntaEntrevistaRepositorio;
 
     public Simulacion insertar(Simulacion simulacion) {
         return simulacionRepositorio.save(simulacion);
@@ -67,10 +78,12 @@ public class SimulacionServicio implements Serializable {
      * El candidato envía la grabación de su entrevista. Se crea la simulación finalizada,
      * se guarda el video en la BD y se asigna el evaluador con menos revisiones pendientes,
      * de modo que la práctica aparece en su cola. La misma grabación no se acepta dos veces.
+     * Las preguntas mostradas durante la grabación se guardan como respuestas de la simulación,
+     * con su orden y el tramo del video en que se respondieron, ligadas al archivo de video.
      */
     @Transactional
     public EnvioEntrevistaDTO enviarEntrevista(String username, Integer idCarrera, Integer duracionSegundos,
-                                               MultipartFile video) {
+                                               MultipartFile video, List<PreguntaRespondidaDTO> preguntas) {
         Usuario candidato = usuarioRepositorio.findByUsername(username)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Usuario no encontrado"));
         if (idCarrera == null) {
@@ -81,6 +94,20 @@ public class SimulacionServicio implements Serializable {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "La carrera seleccionada no existe"));
         if (duracionSegundos == null || duracionSegundos < 1 || duracionSegundos > DURACION_MAXIMA_SEGUNDOS + 5) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La duración del video no es válida");
+        }
+        // Se valida antes de guardar nada: si las preguntas no son coherentes no se crea la simulación.
+        List<PreguntaRespondidaDTO> preguntasOrdenadas = validarPreguntas(preguntas, duracionSegundos);
+        Map<Integer, PreguntaEntrevista> catalogo = preguntaEntrevistaRepositorio
+                .findAllById(preguntasOrdenadas.stream().map(PreguntaRespondidaDTO::getIdPregunta).toList())
+                .stream()
+                .collect(Collectors.toMap(PreguntaEntrevista::getIdPregunta, Function.identity()));
+        for (PreguntaRespondidaDTO p : preguntasOrdenadas) {
+            PreguntaEntrevista pregunta = catalogo.get(p.getIdPregunta());
+            if (pregunta == null || pregunta.getCarrera() == null
+                    || !carrera.getIdCarrera().equals(pregunta.getCarrera().getIdCarrera())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Una de las preguntas no corresponde a la carrera seleccionada");
+            }
         }
 
         byte[] bytes = archivoSimulacionServicio.leerVideo(video);
@@ -110,7 +137,63 @@ public class SimulacionServicio implements Serializable {
             // Dos envíos simultáneos del mismo video: el índice único sobre el hash rechaza el segundo.
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Este video ya fue enviado");
         }
+        guardarPreguntasRespondidas(simulacion, archivo, preguntasOrdenadas, catalogo);
         return aEnvio(simulacion, archivo, null, null);
+    }
+
+    /**
+     * Comprueba que las preguntas no se repitan, que su orden sea 1..n sin huecos y que cada tramo
+     * esté dentro del video y no se solape con el anterior. Devuelve la lista ordenada por posición.
+     */
+    private List<PreguntaRespondidaDTO> validarPreguntas(List<PreguntaRespondidaDTO> preguntas, int duracionSegundos) {
+        if (preguntas == null || preguntas.isEmpty()) return List.of();
+        if (preguntas.size() > MAX_PREGUNTAS_POR_SIMULACION) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Se enviaron demasiadas preguntas");
+        }
+        if (preguntas.stream().anyMatch(p -> p == null || p.getIdPregunta() == null || p.getOrden() == null
+                || p.getSegundoInicio() == null || p.getSegundoFin() == null)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Los datos de las preguntas están incompletos");
+        }
+        List<PreguntaRespondidaDTO> ordenadas = new ArrayList<>(preguntas);
+        ordenadas.sort(Comparator.comparing(PreguntaRespondidaDTO::getOrden));
+        Set<Integer> vistas = new HashSet<>();
+        int finAnterior = 0;
+        for (int i = 0; i < ordenadas.size(); i++) {
+            PreguntaRespondidaDTO p = ordenadas.get(i);
+            if (p.getOrden() != i + 1) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El orden de las preguntas no es válido");
+            }
+            if (!vistas.add(p.getIdPregunta())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Una pregunta aparece repetida");
+            }
+            // Mismo margen de 5 s que se admite en la duración del video.
+            if (p.getSegundoInicio() < finAnterior || p.getSegundoFin() < p.getSegundoInicio()
+                    || p.getSegundoFin() > duracionSegundos + 5) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Los tiempos de las preguntas no coinciden con el video");
+            }
+            finAnterior = p.getSegundoFin();
+        }
+        return ordenadas;
+    }
+
+    private void guardarPreguntasRespondidas(Simulacion simulacion, ArchivoSimulacion video,
+                                             List<PreguntaRespondidaDTO> preguntas,
+                                             Map<Integer, PreguntaEntrevista> catalogo) {
+        if (preguntas.isEmpty()) return;
+        List<RespuestaEntrevista> respuestas = preguntas.stream().map(p -> {
+            RespuestaEntrevista respuesta = new RespuestaEntrevista();
+            respuesta.setSimulacion(simulacion);
+            respuesta.setPregunta(catalogo.get(p.getIdPregunta()));
+            respuesta.setArchivo(video);
+            respuesta.setOrden(p.getOrden());
+            respuesta.setSegundoInicio(p.getSegundoInicio());
+            respuesta.setSegundoFin(p.getSegundoFin());
+            respuesta.setDuracionSegundos(p.getSegundoFin() - p.getSegundoInicio());
+            respuesta.setEstado("enviada");
+            return respuesta;
+        }).toList();
+        respuestaEntrevistaRepositorio.saveAll(respuestas);
     }
 
     /** Evaluador activo con menos entrevistas asignadas sin evaluar; null si no hay evaluadores activos. */

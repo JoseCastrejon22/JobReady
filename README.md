@@ -32,6 +32,14 @@ Necesitas Java 21, Maven o el Maven Wrapper y una base de datos PostgreSQL acces
 
 Desde `backend/`, ejecuta `./mvnw spring-boot:run` en macOS/Linux o `.\mvnw.cmd spring-boot:run` en PowerShell. El frontend llama a los endpoints de autenticación y preguntas. En desarrollo, el proxy evita una llamada directa entre orígenes. En producción, cuando se despliegue la API en HTTPS, configura `FRONTEND_URL` con el origen de GitHub Pages y actualiza la URL base de la API en Angular.
 
+### US11 · Recuperación de contraseña
+
+- **Frontend.** El enlace **Olvidé mi contraseña** abre el formulario de recuperación. El enlace recibido por correo abre el formulario **Nueva contraseña**.
+- **API.** `POST /api/auth/recuperar-password` solicita el envío al correo registrado. `POST /api/auth/restablecer-password` valida el token y guarda la nueva contraseña con BCrypt.
+- **Base de datos.** La tabla `tokens_recuperacion` guarda el hash del token, su vencimiento de 15 minutos y su estado de uso. Una nueva solicitud reemplaza el enlace anterior.
+
+Para enviar los enlaces de recuperación, incorpora la sección de correo de `application-example.properties` a tu configuración y define `SMTP_HOST`, `SMTP_USERNAME` y `SMTP_PASSWORD`. El ejemplo usa el puerto 587 con STARTTLS y el usuario SMTP como remitente. Usa `SMTP_FROM` si tu proveedor requiere otro remitente autorizado. Define `RESET_FRONTEND_URL=http://localhost:4200` para el desarrollo con `npm start`. En producción usa la URL pública completa del frontend, incluido el subdirectorio `/JobReady/` si corresponde.
+
 ## Publicación
 
 GitHub Actions compila y publica el frontend cuando se actualiza `main`, si el origen de GitHub Pages está configurado como **GitHub Actions**. El sitio previsto es https://JoseCastrejon22.github.io/JobReady/. GitHub Pages solo aloja el frontend; el backend y la base de datos necesitan ejecutarse o desplegarse por separado.

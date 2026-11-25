@@ -1,0 +1,714 @@
+====================================================================================
+                 JOBREADY - CÓMO FUNCIONA LA SEGURIDAD ENTRE BACKEND Y FRONTEND
+====================================================================================
+
+Backend : Spring Boot 4 + Spring Security + JJWT 0.11.5 (Java)
+Frontend: Angular (HttpClient + interceptor + guards de ruta)
+Servidor: Nginx sirve el frontend y reenvía /api/ al backend (puerto 8080)
+
+Índice
+  1. Visión general
+  2. Conceptos clave (hash, firma, cifrado, token)
+  3. Contraseñas: BCrypt
+  4. El token JWT: qué contiene y cómo se firma
+  5. Flujo completo de registro
+  6. Flujo completo de inicio de sesión (login)
+  7. Cómo el frontend guarda y envía el token
+  8. Cómo el backend valida cada petición (JwtRequestFilter)
+  9. Autorización por roles (backend) y guards (frontend)
+ 10. "El usuario sale del token": protección de datos propios
+ 11. CORS, CSRF y sesiones sin estado (STATELESS)
+ 12. Secretos y configuración (JWT_SECRET, base de datos)
+ 13. Archivos protegidos (videos y PDF)
+ 14. Expiración y cierre de sesión
+ 15. Diagrama del recorrido de una petición
+ 16. Observaciones y posibles mejoras
+ 17. Mapa de archivos
+
+
+------------------------------------------------------------------------------------
+1. VISIÓN GENERAL
+------------------------------------------------------------------------------------
+
+La aplicación usa autenticación SIN ESTADO basada en JWT (JSON Web Token):
+
+  - El usuario envía usuario y contraseña UNA sola vez (login).
+  - El backend comprueba la contraseña contra el hash BCrypt guardado en la BD.
+  - Si es correcta, el backend genera un token JWT FIRMADO con una clave secreta
+    (JWT_SECRET) y se lo devuelve al frontend junto con los roles.
+  - El frontend guarda el token en sessionStorage y lo adjunta automáticamente en
+    la cabecera "Authorization: Bearer <token>" de cada petición a /api/.
+  - En cada petición, el backend verifica la firma y la expiración del token,
+    identifica al usuario y su rol, y decide si permite o no la operación.
+
+El servidor NO guarda sesiones en memoria: toda la información necesaria para
+identificar al usuario viaja dentro del token, y la firma garantiza que nadie la
+ha modificado.
+
+Hay dos capas de control:
+  - Frontend (guards): solo mejora la experiencia (oculta/bloquea pantallas).
+    NO es seguridad real, porque el usuario controla su navegador.
+  - Backend (Spring Security + @PreAuthorize): es la seguridad REAL. Aunque
+    alguien manipule el frontend, el backend rechaza lo que no corresponde.
+
+
+------------------------------------------------------------------------------------
+2. CONCEPTOS CLAVE
+------------------------------------------------------------------------------------
+
+Es importante distinguir tres cosas que a menudo se llaman "encriptar":
+
+  HASH (lo que se usa con las contraseñas)
+    - Función de un solo sentido: de la contraseña se obtiene el hash, pero del
+      hash NO se puede volver a la contraseña.
+    - Para comprobar un login se vuelve a calcular el hash de lo que escribió el
+      usuario y se compara.
+    - En JobReady: BCrypt.
+
+  FIRMA (lo que se usa con el JWT)
+    - Se calcula un código (HMAC) a partir del contenido del token + una clave
+      secreta que solo conoce el servidor.
+    - Cualquiera puede LEER el contenido del token, pero nadie puede MODIFICARLO
+      sin que la firma deje de coincidir.
+    - En JobReady: HMAC-SHA512 (HS512) con JWT_SECRET.
+
+  CIFRADO (encriptación propiamente dicha)
+    - Transforma datos para que no se puedan leer sin la clave, y es reversible.
+    - En JobReady NO se cifran los tokens ni las contraseñas. La confidencialidad
+      en tránsito depende de usar HTTPS en el servidor (TLS).
+
+Resumen:
+  - Contraseña  -> HASH BCrypt (irreversible, guardado en BD).
+  - Token JWT   -> FIRMADO con HS512 (legible, pero no falsificable).
+  - Transporte  -> debería ir por HTTPS para que nadie intercepte el token.
+
+
+------------------------------------------------------------------------------------
+3. CONTRASEÑAS: BCRYPT
+------------------------------------------------------------------------------------
+
+Archivo: backend/.../security/config/SecurityConfig.java
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
+    }
+
+Cómo funciona BCrypt:
+  - Genera una "sal" (salt) aleatoria distinta para cada contraseña. Así, dos
+    usuarios con la misma contraseña tienen hashes diferentes, y no sirven las
+    tablas precalculadas (rainbow tables).
+  - Aplica el algoritmo muchas veces (factor de coste). Por defecto el coste es
+    10, es decir 2^10 = 1024 rondas. Esto lo hace deliberadamente lento para
+    dificultar los ataques de fuerza bruta.
+  - El resultado incluye todo lo necesario para verificar, por ejemplo:
+
+        $2a$10$4khQk.sSVNCIdUkF/qiGuehOBz22uuIbKpogIrhcVduZ/HJC2qRHq
+         |   |  |-------------------||------------------------------|
+         |   |        sal (22)                  hash (31)
+         |   coste (10)
+         versión del algoritmo
+
+Dónde se aplica:
+  - Registro de candidatos (RegistroCandidatoServicio):
+        usuario.setPasswordHash(passwordEncoder.encode(registroDTO.getPassword()));
+  - Alta/edición de usuarios por el administrador (UsuarioServicio):
+        usuario.setPasswordHash(passwordEncoder.encode(...));
+  - Usuarios iniciales (import.sql): ya vienen con el hash BCrypt de su clave.
+
+Dónde se verifica:
+  - En el login, el AuthenticationManager de Spring usa automáticamente el bean
+    PasswordEncoder: calcula BCrypt de la contraseña enviada usando la sal del
+    hash guardado y compara ambos resultados.
+
+Protección adicional:
+  - En la entidad Usuario el campo passwordHash tiene @JsonIgnore, por lo que el
+    hash NUNCA se envía en las respuestas JSON (ni al listar usuarios, ni al
+    registrarse, etc.).
+
+
+------------------------------------------------------------------------------------
+4. EL TOKEN JWT: QUÉ CONTIENE Y CÓMO SE FIRMA
+------------------------------------------------------------------------------------
+
+Archivo: backend/.../security/util/JwtUtil.java
+
+Un JWT tiene tres partes separadas por puntos:
+
+        xxxxx.yyyyy.zzzzz
+        HEADER.PAYLOAD.SIGNATURE
+
+Cada parte va codificada en Base64URL (codificación, NO cifrado).
+
+  HEADER (cabecera):
+        { "alg": "HS512" }
+
+  PAYLOAD (claims / datos):
+        {
+          "roles": [ { "authority": "ROLE_CANDIDATO" } ],
+          "sub":   "nombre_de_usuario",     <- el "subject": quién es
+          "iat":   1731400000,              <- emitido en (issued at)
+          "exp":   1731401200               <- expira en
+        }
+
+  SIGNATURE (firma):
+        HMAC-SHA512( base64(header) + "." + base64(payload), JWT_SECRET )
+
+Generación (en el login):
+
+    public String generateToken(UserDetails userDetails) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("roles", userDetails.getAuthorities());
+        return createToken(claims, userDetails.getUsername());
+    }
+
+    private String createToken(Map<String, Object> claims, String subject) {
+        Date ahora = new Date();
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(subject)
+                .setIssuedAt(ahora)
+                .setExpiration(new Date(ahora.getTime() + tiempoExpiracion))
+                .signWith(SignatureAlgorithm.HS512, secretKey)
+                .compact();
+    }
+
+  - secretKey      = jwt.secret      = variable de entorno JWT_SECRET
+  - tiempoExpiracion = jwt.expiration = 1200000 ms = 20 minutos
+
+Lectura/verificación:
+
+    private Claims extractAllClaims(String token) {
+        return Jwts.parser().setSigningKey(secretKey).parseClaimsJws(token).getBody();
+    }
+
+  parseClaimsJws() hace TODO esto y lanza excepción si algo falla:
+    - Recalcula la firma con JWT_SECRET y la compara con la del token.
+      Si alguien cambió "ROLE_CANDIDATO" por "ROLE_ADMIN" en el payload, la firma
+      ya no coincide -> SignatureException -> token rechazado.
+    - Comprueba que no haya expirado -> ExpiredJwtException.
+    - Comprueba el formato -> MalformedJwtException.
+
+    public Boolean validateToken(String token, UserDetails userDetails) {
+        return extractUsername(token).equals(userDetails.getUsername())
+                && extractExpiration(token).after(new Date());
+    }
+
+IMPORTANTE: el claim "roles" se incluye en el token, pero el backend NO confía en
+él para autorizar. En cada petición vuelve a cargar al usuario desde la base de
+datos (ver sección 8) y usa el rol que hay en la BD en ese momento. Así, si un
+administrador cambia el rol o desactiva una cuenta, el cambio se aplica en la
+siguiente petición aunque el token siga vigente.
+
+
+------------------------------------------------------------------------------------
+5. FLUJO COMPLETO DE REGISTRO
+------------------------------------------------------------------------------------
+
+Frontend: registro-componente  ->  AuthService.registrar()
+Backend : POST /api/registro   ->  RegistroController -> RegistroCandidatoServicio
+
+  1. El usuario llena el formulario (nombre, email, username, password, teléfono).
+  2. Angular hace:  POST /api/registro  { ...datos, password: "en texto plano" }
+     (la contraseña viaja en texto plano dentro del cuerpo; por eso es necesario
+     HTTPS en producción).
+  3. /api/registro está en la lista permitAll() de SecurityConfig, así que no
+     necesita token.
+  4. RegistroCandidatoServicio:
+       - Rechaza si el username o el email ya existen.
+       - Asigna SIEMPRE el rol CANDIDATO (el usuario no puede elegir su rol;
+         aunque mande un campo "rol" en el JSON, se ignora porque el DTO no lo
+         tiene).
+       - Guarda passwordEncoder.encode(password) -> hash BCrypt.
+       - Estado "activo".
+  5. Devuelve el usuario creado (sin el hash, por el @JsonIgnore).
+  6. El usuario después debe iniciar sesión para obtener su token.
+
+
+------------------------------------------------------------------------------------
+6. FLUJO COMPLETO DE INICIO DE SESIÓN (LOGIN)
+------------------------------------------------------------------------------------
+
+Frontend: ingresar-componente -> AuthService.ingresar()
+Backend : POST /api/authenticate -> AuthController
+
+  FRONTEND                                   BACKEND
+  --------                                   -------
+  1. POST /api/authenticate
+     { "username": "...", "password": "..." }
+                         -------------------->
+                                             2. authenticationManager.authenticate(
+                                                  new UsernamePasswordAuthenticationToken(
+                                                      username, password))
+                                                   |
+                                                   +-> CustomUserDetailsService
+                                                   |     .loadUserByUsername(username)
+                                                   |     - busca el usuario en la BD
+                                                   |     - rol "candidato" -> "ROLE_CANDIDATO"
+                                                   |     - si estado = "inactivo" -> disabled
+                                                   |
+                                                   +-> BCrypt.matches(password, hashBD)
+                                                   |
+                                                   +-> si falla: excepción -> 401/403
+                                                       (usuario inexistente, clave
+                                                        incorrecta o cuenta desactivada)
+
+                                             3. jwtUtil.generateToken(userDetails)
+                                             4. Respuesta:
+                                                Header: Authorization: Bearer <jwt>
+                                                Body:   { "roles": ["ROLE_CANDIDATO"] }
+                                                (el token va solo en la cabecera)
+                         <--------------------
+  5. sessionStorage:
+       jobready.jwt   = <jwt>
+       jobready.roles = ["ROLE_CANDIDATO"]
+       (borra jobready.usuario anterior)
+  6. Redirige según el rol:
+       ROLE_ADMIN     -> /administracion
+       ROLE_EVALUADOR -> /evaluador
+       ROLE_CANDIDATO -> /panel
+       otro           -> /acceso-denegado
+
+Notas:
+  - Las cuentas desactivadas por el administrador no pueden iniciar sesión,
+    porque CustomUserDetailsService las marca como disabled.
+  - Ante cualquier error el frontend muestra un mensaje genérico ("No fue posible
+    iniciar sesión...") sin decir si falló el usuario o la clave, lo que evita
+    revelar qué usuarios existen.
+
+
+------------------------------------------------------------------------------------
+7. CÓMO EL FRONTEND GUARDA Y ENVÍA EL TOKEN
+------------------------------------------------------------------------------------
+
+7.1 Almacenamiento (auth-service.ts)
+
+    const TOKEN_KEY   = 'jobready.jwt';
+    const ROLES_KEY   = 'jobready.roles';
+    const USUARIO_KEY = 'jobready.usuario';
+
+  Se usa sessionStorage (no localStorage):
+    - Los datos se borran al cerrar la pestaña/ventana.
+    - No se comparten entre pestañas distintas.
+    - No se envían solos al servidor (a diferencia de las cookies), por eso no hay
+      riesgo de CSRF (ver sección 11).
+
+7.2 Interceptor HTTP (jwt-interceptor.ts)
+
+    export const jwtInterceptor: HttpInterceptorFn = (request, next) => {
+      const token = sessionStorage.getItem(TOKEN_KEY);
+      if (!token || !request.url.includes('/api/')) return next(request);
+      return next(request.clone({ setHeaders: { Authorization: `Bearer ${token}` } }));
+    };
+
+  Registrado en app.config.ts:
+    provideHttpClient(withInterceptors([jwtInterceptor]))
+
+  Qué hace:
+    - Intercepta TODAS las peticiones del HttpClient de Angular.
+    - Si existe token y la URL es de la API (/api/), clona la petición y le añade
+      la cabecera Authorization: Bearer <token>.
+    - Así ningún servicio (carreras, simulaciones, admin...) tiene que acordarse
+      de poner el token: es automático y centralizado.
+    - Solo se envía a /api/, de modo que el token no se filtra a otros dominios
+      o recursos.
+
+7.3 Mismo origen gracias al proxy
+
+  API_BASE_URL = '/api' (ruta relativa).
+    - En desarrollo: proxy.conf.json reenvía /api -> http://localhost:8080.
+    - En producción: Nginx reenvía /api/ -> http://127.0.0.1:8080/api/.
+  Para el navegador, frontend y API están en el MISMO origen, por lo que el
+  backend no queda expuesto directamente y CORS casi no interviene.
+
+7.4 Descarga de archivos protegidos
+
+  Los videos y PDF NO se abren con un <a href> directo (el navegador no mandaría
+  el token). Se piden con HttpClient (responseType 'blob'), el interceptor añade
+  el token y luego se crea una URL local con URL.createObjectURL(blob).
+
+
+------------------------------------------------------------------------------------
+8. CÓMO EL BACKEND VALIDA CADA PETICIÓN (JwtRequestFilter)
+------------------------------------------------------------------------------------
+
+Archivo: backend/.../security/filters/JwtRequestFilter.java
+
+Es un filtro que se ejecuta UNA vez por petición (OncePerRequestFilter), ANTES
+del filtro de usuario/contraseña de Spring:
+
+    http.addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);
+
+Paso a paso:
+
+  1. Lee la cabecera "Authorization".
+  2. Si no existe o no empieza por "Bearer ", no hace nada: la petición sigue como
+     ANÓNIMA (y Spring la rechazará más adelante si la ruta exige login).
+  3. Quita "Bearer " (7 caracteres) y obtiene el JWT.
+  4. jwtUtil.extractUsername(jwt):
+       - verifica la firma HS512 con JWT_SECRET,
+       - verifica la expiración,
+       - devuelve el "sub" (username).
+  5. Carga el usuario DESDE LA BASE DE DATOS:
+       userDetailsService.loadUserByUsername(username)
+       -> obtiene su rol ACTUAL y su estado.
+  6. jwtUtil.validateToken(jwt, userDetails): confirma que el username coincide y
+     que no ha expirado.
+  7. Si todo es correcto, crea un UsernamePasswordAuthenticationToken con las
+     authorities (ROLE_...) y lo coloca en el SecurityContextHolder. A partir de
+     aquí, para Spring, la petición está autenticada como ese usuario.
+  8. Si el token es falso, está alterado, expiró o está mal formado, se captura
+     JwtException / IllegalArgumentException y se limpia el contexto: la petición
+     sigue como anónima y será rechazada (401/403).
+  9. chain.doFilter(): continúa hacia el controlador.
+
+Después del filtro, SecurityConfig aplica:
+
+    .requestMatchers("/api/authenticate", "/api/registro", "/swagger-ui.html",
+                     "/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()
+    .anyRequest().authenticated()
+
+  - Rutas públicas: login, registro, documentación Swagger y /error.
+  - TODO lo demás exige un token válido.
+
+
+------------------------------------------------------------------------------------
+9. AUTORIZACIÓN POR ROLES
+------------------------------------------------------------------------------------
+
+Roles: ADMIN, EVALUADOR, CANDIDATO.
+En la BD se guardan como "ADMIN", "candidato", etc.; CustomUserDetailsService los
+pasa a mayúsculas y les añade el prefijo "ROLE_" (convención de Spring Security):
+
+    String nombreRol = usuario.getRol().getNombre().toUpperCase();
+    if (!nombreRol.startsWith("ROLE_")) nombreRol = "ROLE_" + nombreRol;
+
+9.1 Backend: @PreAuthorize (la seguridad real)
+
+  SecurityConfig activa: @EnableMethodSecurity(prePostEnabled = true)
+
+  Cada endpoint declara quién puede usarlo, por ejemplo:
+
+    @PreAuthorize("hasRole('ADMIN')")                         // solo administrador
+    @PreAuthorize("hasAnyRole('ADMIN', 'EVALUADOR')")         // admin o evaluador
+    @PreAuthorize("hasRole('CANDIDATO')")                     // solo candidato
+
+  hasRole('ADMIN') comprueba internamente la authority "ROLE_ADMIN".
+
+  También se puede poner a nivel de clase y sobrescribir en un método. Ejemplo en
+  UsuarioController: la clase entera es solo ADMIN, pero /usuario/actual se abre
+  al CANDIDATO:
+
+    @PreAuthorize("hasRole('ADMIN')")
+    public class UsuarioController {
+        @GetMapping("/usuario/actual")
+        @PreAuthorize("hasRole('CANDIDATO')")
+        public UsuarioActualDTO obtenerActual(Authentication authentication) { ... }
+    }
+
+  Si el rol no coincide, Spring responde 403 Forbidden antes de ejecutar el
+  método. Si no hay token válido, la petición se rechaza por no estar
+  autenticada.
+
+  Resumen de permisos (aproximado):
+    ADMIN      -> usuarios, roles, carreras, preguntas, planes, encuestas,
+                  eliminar envíos pendientes.
+    EVALUADOR  -> cola de pendientes, registrar/editar sus evaluaciones, ver
+                  videos de las prácticas.
+    CANDIDATO  -> su panel, sus simulaciones, enviar entrevistas, sus resultados,
+                  sesiones programadas, carreras, suscripciones, encuesta.
+
+9.2 Frontend: guards de ruta (rol-guard.ts) - solo experiencia de usuario
+
+    export const requiereSesion: CanActivateFn = () =>
+      auth.estaAutenticado() ? true : router.createUrlTree(['/ingresar']);
+
+    export function requiereRol(rol: string): CanActivateFn {
+      return () => {
+        if (!auth.estaAutenticado()) return router.createUrlTree(['/ingresar']);
+        return auth.obtenerRoles().includes(`ROLE_${rol}`)
+          ? true : router.createUrlTree(['/acceso-denegado']);
+      };
+    }
+
+  En app.routes.ts:
+    { path: 'panel',          canActivate: [requiereRol('CANDIDATO')] }
+    { path: 'administracion', canActivate: [requiereRol('ADMIN')] }
+    { path: 'evaluador',      canActivate: [requiereRol('EVALUADOR')] }
+
+  - Sin sesión -> /ingresar. Con otro rol -> /acceso-denegado.
+  - Estos guards leen los roles de sessionStorage, que el usuario PUEDE editar
+    desde las herramientas del navegador. Si alguien se pone "ROLE_ADMIN" a mano,
+    podrá ver la pantalla de administración vacía, pero todas las llamadas a la
+    API fallarán con 403, porque el backend usa el rol real de la BD.
+
+
+------------------------------------------------------------------------------------
+10. "EL USUARIO SALE DEL TOKEN": PROTECCIÓN DE DATOS PROPIOS
+------------------------------------------------------------------------------------
+
+Muchos endpoints del candidato NO reciben el id del usuario como parámetro; lo
+toman de la autenticación que creó el filtro JWT:
+
+    @GetMapping("/simulaciones/mias")
+    @PreAuthorize("hasRole('CANDIDATO')")
+    public List<Simulacion> listarMias(Authentication authentication) {
+        return simulacionServicio.listarPorUsuario(authentication.getName());
+    }
+
+  authentication.getName() = el "sub" del token = username verificado.
+
+Ventaja: un candidato no puede pedir "las simulaciones del usuario 5" cambiando
+un número en la URL, porque el servidor solo usa la identidad que viene firmada
+en el token.
+
+Se aplica en: /usuario/actual, /simulaciones/mias, /simulaciones/mias/envios,
+/simulacion/enviar, encuestas propias, evaluaciones del especialista,
+resultado de una simulación del candidato, archivos de la simulación, etc.
+Por ejemplo, al descargar un archivo, el servicio recibe el Authentication y
+comprueba que un candidato solo acceda a archivos de SUS prácticas.
+
+
+------------------------------------------------------------------------------------
+11. CORS, CSRF Y SESIONES SIN ESTADO
+------------------------------------------------------------------------------------
+
+11.1 STATELESS
+
+    .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+  Spring no crea sesión HTTP ni cookie JSESSIONID. Cada petición se autentica
+  solo con el JWT. Esto permite escalar el backend (varias instancias) sin
+  compartir sesiones.
+
+11.2 CSRF deshabilitado
+
+    http.csrf(AbstractHttpConfigurer::disable)
+
+  El ataque CSRF consiste en que otra web haga que el navegador envíe una
+  petición a tu servidor aprovechando que las COOKIES se adjuntan solas. Como
+  aquí el token va en la cabecera Authorization (puesta por JavaScript desde
+  sessionStorage) y no en una cookie, otra web no puede adjuntarlo. Por eso es
+  correcto desactivar CSRF en esta arquitectura.
+
+11.3 CORS
+
+    CorsConfiguration config = new CorsConfiguration();
+    config.setAllowCredentials(true);
+    config.addAllowedOrigin(frontendUrl);   // ip.frontend = FRONTEND_URL
+    config.addAllowedHeader("*");
+    config.addAllowedMethod("*");
+    config.addExposedHeader("Authorization");
+
+  - Solo el origen configurado en FRONTEND_URL (por defecto
+    http://localhost:3000) puede llamar a la API desde un navegador.
+  - Se expone la cabecera Authorization para que el frontend pueda leerla en la
+    respuesta del login (aunque el frontend usa el campo "jwt" del cuerpo).
+  - Con el proxy (Angular o Nginx) frontend y API comparten origen, así que en la
+    práctica CORS solo actúa si se accede al backend desde otro dominio.
+
+
+------------------------------------------------------------------------------------
+12. SECRETOS Y CONFIGURACIÓN
+------------------------------------------------------------------------------------
+
+application.properties NO se sube a git (está en .gitignore). Se usa
+application-example.properties como plantilla, y los valores sensibles vienen de
+variables de entorno:
+
+    spring.datasource.url=${DB_URL}
+    spring.datasource.username=${DB_USERNAME}
+    spring.datasource.password=${DB_PASSWORD}
+    jwt.secret=${JWT_SECRET}
+    jwt.expiration=1200000
+    ip.frontend=${FRONTEND_URL:http://localhost:3000}
+    server.error.include-stacktrace=never
+
+  - JWT_SECRET es la pieza más crítica: quien la conozca puede fabricar tokens
+    válidos de cualquier usuario y rol. Debe ser larga y aleatoria (para HS512,
+    al menos 64 bytes) y no compartirse nunca.
+    Ejemplo para generar una:   openssl rand -base64 64
+  - Si se cambia JWT_SECRET, todos los tokens emitidos dejan de ser válidos (todos
+    los usuarios deben volver a iniciar sesión). Es la forma de "invalidar todo"
+    ante una filtración.
+  - server.error.include-stacktrace=never evita mostrar detalles internos del
+    servidor en los errores.
+
+
+------------------------------------------------------------------------------------
+13. ARCHIVOS PROTEGIDOS (VIDEOS Y PDF)
+------------------------------------------------------------------------------------
+
+  - Los videos de entrevista y los PDF de evaluación se guardan en la BD
+    (ArchivoSimulacionContenido) y NO son accesibles por una URL pública.
+  - GET /api/archivo-simulacion/{id}/contenido exige token y rol
+    (ADMIN, EVALUADOR o CANDIDATO); el servicio comprueba que el candidato solo
+    descargue archivos de sus propias prácticas.
+  - La respuesta lleva Cache-Control: no-store, para que el navegador/proxies no
+    guarden copias.
+  - El frontend lo pide con HttpClient (blob) para que el interceptor añada el
+    token, y lo muestra con URL.createObjectURL.
+  - Límite de subida: 100 MB por archivo (spring.servlet.multipart.*).
+
+
+------------------------------------------------------------------------------------
+14. EXPIRACIÓN Y CIERRE DE SESIÓN
+------------------------------------------------------------------------------------
+
+  Expiración:
+    - El token dura 20 minutos (jwt.expiration = 1200000 ms).
+    - Pasado ese tiempo el backend lo rechaza y las llamadas a la API fallan; el
+      usuario debe volver a iniciar sesión.
+    - No existe "refresh token": no se renueva automáticamente.
+
+  Cierre de sesión (AuthService.cerrarSesion):
+    sessionStorage.removeItem('jobready.jwt');
+    sessionStorage.removeItem('jobready.roles');
+    sessionStorage.removeItem('jobready.usuario');
+
+    - Es un logout del lado del cliente: se olvida el token.
+    - El servidor no mantiene lista negra; si alguien hubiera copiado el token,
+      seguiría siendo válido hasta su expiración (máximo 20 min). Por eso la
+      duración corta es importante.
+
+  Desactivación de cuentas:
+    - Como el filtro recarga el usuario de la BD en cada petición, si el admin
+      desactiva una cuenta, Spring la marca como disabled. El login queda
+      bloqueado de inmediato.
+
+
+------------------------------------------------------------------------------------
+15. DIAGRAMA DEL RECORRIDO DE UNA PETICIÓN
+------------------------------------------------------------------------------------
+
+  Ejemplo: el candidato abre su historial.
+
+  [Componente Angular]
+        | simulacionesServicio.listarMias()
+        v
+  [HttpClient]  GET /api/simulaciones/mias
+        |
+        v
+  [jwtInterceptor]  añade  Authorization: Bearer eyJhbGciOiJIUzUxMiJ9...
+        |
+        v
+  [Navegador] ---HTTPS---> [Nginx :80/443]  location /api/ -> 127.0.0.1:8080
+                                   |
+                                   v
+                           [CorsFilter]  (origen permitido)
+                                   |
+                                   v
+                           [JwtRequestFilter]
+                              - firma HS512 válida?        no -> anónimo
+                              - no expirado?               no -> anónimo
+                              - usuario existe en BD?      no -> anónimo
+                              - SecurityContext = usuario + ROLE_CANDIDATO
+                                   |
+                                   v
+                           [authorizeHttpRequests]  anyRequest().authenticated()
+                              - anónimo -> rechazo (401/403)
+                                   |
+                                   v
+                           [@PreAuthorize("hasRole('CANDIDATO')")]
+                              - otro rol -> 403 Forbidden
+                                   |
+                                   v
+                           [SimulacionController.listarMias(authentication)]
+                              - usa authentication.getName() del token
+                                   |
+                                   v
+                           [Servicio -> Repositorio -> BD]
+                                   |
+                                   v
+        <----------------- 200 OK  [ ...solo simulaciones de ese candidato... ]
+
+
+------------------------------------------------------------------------------------
+16. OBSERVACIONES Y POSIBLES MEJORAS
+------------------------------------------------------------------------------------
+
+Puntos fuertes:
+  + Contraseñas con BCrypt y sal; el hash nunca sale en el JSON.
+  + Tokens firmados con HS512 y de vida corta (20 min).
+  + Autorización real en el backend con @PreAuthorize en todos los controladores.
+  + El rol y el estado se leen de la BD en cada petición (no se confía en el
+    claim del token).
+  + Los endpoints "mías" toman la identidad del token, no de la URL.
+  + Secretos en variables de entorno, fuera de git.
+  + Arquitectura sin estado, sin cookies -> sin CSRF.
+
+A tener en cuenta / mejoras sugeridas:
+  - HTTPS: la configuración de Nginx de ejemplo escucha en el puerto 80 (HTTP).
+    En producción debe usarse HTTPS (p. ej. Let's Encrypt); si no, la contraseña
+    del login y el token viajan en claro por la red.
+  - sessionStorage es accesible desde JavaScript: si hubiera una vulnerabilidad
+    XSS, un script podría robar el token. Angular escapa el contenido de las
+    plantillas por defecto, lo que mitiga bastante el riesgo. La alternativa más
+    robusta es una cookie HttpOnly + Secure + SameSite (pero entonces sí habría
+    que reactivar protección CSRF).
+  - El frontend no detecta la expiración del token: tras 20 minutos las
+    peticiones fallan pero el usuario sigue "logueado" en la interfaz. Se podría
+    añadir en el interceptor un manejo de 401/403 que llame a cerrarSesion() y
+    redirija a /ingresar, o leer el "exp" del token.
+  - [IMPORTANTE] Falta comprobar la propiedad (IDOR) en estos endpoints, que
+    permiten el rol CANDIDATO pero NO pasan el usuario autenticado al servicio:
+      DELETE /api/simulacion/{id}          (ADMIN, CANDIDATO)
+        -> SimulacionServicio.eliminar(id) borra por id sin mirar el dueño.
+      PUT    /api/simulacion/{id}          (CANDIDATO)
+        -> SimulacionServicio.actualizar(id, datos) sobrescribe la simulación,
+           incluido el campo usuario, con lo que mande el cliente.
+      DELETE /api/archivo-simulacion/{id}  (ADMIN, CANDIDATO)
+        -> ArchivoSimulacionServicio.eliminar(id) borra por id sin mirar el dueño.
+    Hoy, cualquier candidato con sesión iniciada puede modificar o borrar
+    simulaciones/archivos de OTROS candidatos con solo cambiar el id.
+    Solución: recibir Authentication en el controlador y, si el usuario no es
+    ADMIN, verificar que simulacion.getUsuario().getUsername() sea
+    authentication.getName() (como ya hace verificarAcceso() en las descargas);
+    en el PUT, además, no permitir que el cliente cambie el usuario.
+  - Swagger (/swagger-ui, /v3/api-docs) es público; en producción conviene
+    restringirlo o desactivarlo.
+  - No hay límite de intentos de login (rate limiting): se podría limitar en
+    Nginx (limit_req) o con un contador de intentos fallidos.
+  - JJWT 0.11.5 con setSigningKey(String) / signWith(SignatureAlgorithm, String)
+    usa métodos obsoletos. En versiones nuevas (0.12.x) se recomienda
+    Keys.hmacShaKeyFor(bytes) y Jwts.parser().verifyWith(key).build().
+  - El registro no valida formato de email ni fortaleza de la contraseña en el
+    backend (solo se comprueba que username/email no estén repetidos).
+  - spring.jpa.show-sql=true y logging DEBUG son útiles en desarrollo, pero en
+    producción pueden escribir datos sensibles en los logs.
+
+
+------------------------------------------------------------------------------------
+17. MAPA DE ARCHIVOS
+------------------------------------------------------------------------------------
+
+BACKEND (backend/src/main/java/com/jobready/web/)
+  security/config/SecurityConfig.java           Reglas de acceso, BCrypt, CORS,
+                                                STATELESS, CSRF, registro del filtro
+  security/filters/JwtRequestFilter.java        Valida el token en cada petición
+  security/util/JwtUtil.java                    Genera, firma y lee los JWT
+  security/services/CustomUserDetailsService.java  Carga usuario + rol desde la BD
+  security/services/RegistroCandidatoServicio.java Registro con hash BCrypt
+  security/controllers/AuthController.java      POST /api/authenticate (login)
+  security/controllers/RegistroController.java  POST /api/registro
+  security/dtos/AuthRequestDTO.java             { username, password }
+  security/dtos/AuthResponseDTO.java            { jwt, roles }
+  entidades/Usuario.java                        passwordHash con @JsonIgnore
+  controladores/*.java                          @PreAuthorize por endpoint
+  resources/application-example.properties      Plantilla de configuración
+
+FRONTEND (frontend/src/app/)
+  servicios/auth-service.ts                     Login, registro, logout,
+                                                sessionStorage, roles
+  servicios/jwt-interceptor.ts                  Añade "Authorization: Bearer"
+  servicios/rol-guard.ts                        requiereSesion / requiereRol
+  servicios/api-configuracion.ts                API_BASE_URL = '/api'
+  app.config.ts                                 Registra el interceptor
+  app.routes.ts                                 Rutas protegidas por rol
+  componentes/ingresar-componente/              Pantalla de login y redirección
+  ../proxy.conf.json                            Proxy /api en desarrollo
+
+INFRAESTRUCTURA
+  backend/docs/jobready-nginx.conf              Nginx: sirve Angular y reenvía /api
+
+====================================================================================

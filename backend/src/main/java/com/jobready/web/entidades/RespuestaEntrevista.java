@@ -46,6 +46,18 @@ public class RespuestaEntrevista {
     @Column(length = 20)
     private String estado;
 
+    /** Posición (1, 2, 3…) en que la pregunta se mostró al candidato durante la grabación. */
+    @Column(name = "orden")
+    private Integer orden;
+
+    /** Segundo del video en que se mostró la pregunta (inicio de la respuesta). */
+    @Column(name = "segundo_inicio")
+    private Integer segundoInicio;
+
+    /** Segundo del video en que el candidato pasó a la siguiente pregunta o terminó la grabación. */
+    @Column(name = "segundo_fin")
+    private Integer segundoFin;
+
     @PrePersist
     public void asignarValoresIniciales() {
         if (fechaRespuesta == null) fechaRespuesta = LocalDateTime.now();

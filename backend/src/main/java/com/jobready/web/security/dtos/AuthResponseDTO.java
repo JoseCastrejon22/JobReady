@@ -7,7 +7,7 @@ import java.util.Set;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
+/** Cuerpo de /api/authenticate: el token va solo en la cabecera Authorization. */
 public class AuthResponseDTO {
-    private String jwt;
     private Set<String> roles;
 }

@@ -3,8 +3,8 @@ export interface AuthRequest {
   password: string;
 }
 
+/** El JWT no viaja en el cuerpo: se lee de la cabecera Authorization de la respuesta. */
 export interface AuthResponse {
-  jwt: string;
   roles: string[];
 }
 
@@ -132,6 +132,19 @@ export interface RespuestaEntrevista {
   duracionSegundos?: number | null;
   fechaRespuesta?: string;
   estado?: string;
+  /** Posición en que la pregunta se mostró al candidato (1, 2, 3…). */
+  orden?: number | null;
+  /** Tramo del video (segundos desde el inicio) en que se respondió la pregunta. */
+  segundoInicio?: number | null;
+  segundoFin?: number | null;
+}
+
+/** Pregunta mostrada durante la grabación, con su orden y su tramo del video (se envía con el video). */
+export interface PreguntaRespondida {
+  idPregunta: number;
+  orden: number;
+  segundoInicio: number;
+  segundoFin: number;
 }
 
 export interface EvaluacionSimulacion {

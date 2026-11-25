@@ -1,13 +1,27 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
-import { FormsModule } from '@angular/forms';
+import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
+import { MatButtonModule } from '@angular/material/button';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
 import { SimulacionesServicio } from '../../servicios/simulaciones-servicio';
 import { RespuestaEntrevista, SimulacionDetalle } from '../../modelos/api-modelos';
 import { EvaluadorServicio } from '../../servicios/evaluador-servicio';
 import { PanelRolLayout } from '../panel-rol-layout/panel-rol-layout';
+
+const MAX_TEXTO = 4000;
+
+/** Rechaza textos que solo contienen espacios. */
+function noVacio(control: AbstractControl<string>): ValidationErrors | null {
+  return (control.value ?? '').trim() ? null : { required: true };
+}
+
+const validadoresPorcentaje = [Validators.required, Validators.min(0), Validators.max(100), Validators.pattern(/^\d+$/)];
+const validadoresTexto = [Validators.required, noVacio, Validators.maxLength(MAX_TEXTO)];
 
 /**
  * US05 y US06: el evaluador revisa el video o las respuestas de una práctica y registra la rúbrica:
@@ -16,7 +30,10 @@ import { PanelRolLayout } from '../panel-rol-layout/panel-rol-layout';
 @Component({
   selector: 'app-evaluador-evaluar',
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [PanelRolLayout, RouterLink, FormsModule, DatePipe],
+  imports: [
+    PanelRolLayout, RouterLink, ReactiveFormsModule, DatePipe,
+    MatFormFieldModule, MatInputModule, MatButtonModule, MatProgressSpinnerModule,
+  ],
   templateUrl: './evaluador-evaluar.html',
   styleUrls: ['../panel-rol-layout/panel-contenido.css', './evaluador-evaluar.css'],
 })
@@ -25,27 +42,39 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
   private readonly servicio = inject(EvaluadorServicio);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly fb = inject(FormBuilder);
 
   protected idSimulacion = 0;
   protected simulacion: SimulacionDetalle | null = null;
   protected respuestas: RespuestaEntrevista[] = [];
+  /** Preguntas que el candidato vio durante la grabación, en orden y con su tramo del video. */
+  protected preguntasVideo: RespuestaEntrevista[] = [];
+  /** Respuestas escritas (prácticas anteriores al video con preguntas). */
+  protected respuestasTexto: RespuestaEntrevista[] = [];
+  /** Pregunta que corresponde al momento actual de reproducción. */
+  protected indiceActivo = -1;
+  @ViewChild('reproductor') private reproductor?: ElementRef<HTMLVideoElement>;
+  /** Mientras se calcula la duración de un WebM sin metadatos no se resalta ni se salta. */
+  private corrigiendoDuracion = false;
+  private saltoPendiente: number | null = null;
   protected cargando = true;
   protected enviando = false;
   protected error = '';
-  protected intentoEnviar = false;
 
   // Video enviado por el candidato.
   protected urlVideo = '';
   protected tieneVideo = false;
   protected errorVideo = '';
 
-  // Rúbrica
-  protected readonly maxTexto = 4000;
-  protected seguridad: number | null = null;
-  protected claridad: number | null = null;
-  protected dominio: number | null = null;
-  protected oportunidades = '';
-  protected recomendaciones = '';
+  // Rúbrica (Angular Material + formulario reactivo)
+  protected readonly maxTexto = MAX_TEXTO;
+  protected readonly formulario = this.fb.group({
+    seguridad: this.fb.control<number | null>(null, validadoresPorcentaje),
+    claridad: this.fb.control<number | null>(null, validadoresPorcentaje),
+    dominio: this.fb.control<number | null>(null, validadoresPorcentaje),
+    oportunidades: this.fb.nonNullable.control('', validadoresTexto),
+    recomendaciones: this.fb.nonNullable.control('', validadoresTexto),
+  });
 
   ngOnInit(): void {
     this.idSimulacion = Number(this.route.snapshot.paramMap.get('id'));
@@ -55,6 +84,10 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
     }).subscribe({
       next: ({ respuestas, simulaciones }) => {
         this.respuestas = respuestas;
+        // El backend ya las devuelve ordenadas por la posición en que se mostraron.
+        this.preguntasVideo = respuestas.filter((r) => r.segundoInicio != null && r.segundoFin != null);
+        this.respuestasTexto = respuestas.filter((r) => r.segundoInicio == null || r.segundoFin == null);
+        this.indiceActivo = this.preguntasVideo.length ? 0 : -1;
         this.simulacion = simulaciones.find((s) => s.idSimulacion === this.idSimulacion) ?? null;
         this.cargando = false;
         this.cargarVideo();
@@ -78,6 +111,61 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
     });
   }
 
+  /**
+   * Los WebM de MediaRecorder no traen la duración (Infinity) y el navegador no sabe saltar a un
+   * segundo concreto. Se fuerza a calcularla llevando el cursor al final y devolviéndolo al inicio.
+   */
+  protected alCargarMetadatos(): void {
+    const video = this.reproductor?.nativeElement;
+    if (!video || Number.isFinite(video.duration)) return;
+    this.corrigiendoDuracion = true;
+    const restaurar = () => {
+      video.removeEventListener('timeupdate', restaurar);
+      this.corrigiendoDuracion = false;
+      video.currentTime = this.saltoPendiente ?? 0;
+      if (this.saltoPendiente !== null) void video.play().catch(() => undefined);
+      this.saltoPendiente = null;
+    };
+    video.addEventListener('timeupdate', restaurar);
+    video.currentTime = Number.MAX_SAFE_INTEGER;
+  }
+
+  /** Resalta la pregunta cuyo tramo contiene el instante actual del video. */
+  protected alAvanzarVideo(): void {
+    const video = this.reproductor?.nativeElement;
+    if (!video || this.corrigiendoDuracion || !this.preguntasVideo.length) return;
+    this.indiceActivo = this.indicePara(video.currentTime);
+  }
+
+  private indicePara(segundo: number): number {
+    for (let i = this.preguntasVideo.length - 1; i >= 0; i--) {
+      if (segundo >= (this.preguntasVideo[i].segundoInicio ?? 0)) return i;
+    }
+    return 0;
+  }
+
+  /** Lleva el reproductor al momento en que comenzó la respuesta de la pregunta elegida. */
+  protected irAPregunta(indice: number): void {
+    const video = this.reproductor?.nativeElement;
+    const inicio = this.preguntasVideo[indice]?.segundoInicio;
+    if (!video || inicio == null) return;
+    this.indiceActivo = indice;
+    if (this.corrigiendoDuracion) {
+      this.saltoPendiente = inicio;
+      return;
+    }
+    video.currentTime = inicio;
+    void video.play().catch(() => undefined);
+  }
+
+  protected tramo(r: RespuestaEntrevista): string {
+    return `${this.mmss(r.segundoInicio ?? 0)} – ${this.mmss(r.segundoFin ?? 0)}`;
+  }
+
+  private mmss(total: number): string {
+    return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
+  }
+
   /** Promedio en segundos de las respuestas; si la práctica es solo un video, su duración (el backend calcula lo mismo). */
   protected get tiempoPromedio(): number {
     const tiempos = this.respuestas.map((r) => r.duracionSegundos ?? 0).filter((t) => t > 0);
@@ -89,38 +177,35 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
     if (this.urlVideo) URL.revokeObjectURL(this.urlVideo);
   }
 
-  /** Porcentaje entero entre 0 y 100. */
-  protected porcentajeInvalido(valor: number | null): boolean {
-    return valor === null || !Number.isInteger(valor) || valor < 0 || valor > 100;
-  }
-
-  protected textoInvalido(texto: string): boolean {
-    return !texto.trim() || texto.trim().length > this.maxTexto;
-  }
-
   /** Puntaje general: promedio de los tres porcentajes redondeado (mismo cálculo que el backend). */
   protected get puntajeGeneral(): number | null {
-    if ([this.seguridad, this.claridad, this.dominio].some((v) => this.porcentajeInvalido(v))) return null;
-    return Math.round((this.seguridad! + this.claridad! + this.dominio!) / 3);
+    const { seguridad, claridad, dominio } = this.formulario.controls;
+    if (seguridad.invalid || claridad.invalid || dominio.invalid) return null;
+    return Math.round((Number(seguridad.value) + Number(claridad.value) + Number(dominio.value)) / 3);
+  }
+
+  protected largo(campo: 'oportunidades' | 'recomendaciones'): number {
+    return this.formulario.controls[campo].value.trim().length;
   }
 
   protected enviar(): void {
-    this.intentoEnviar = true;
     this.error = '';
-    // US06 escenario 2: si falta un criterio, no se envía y se resalta.
-    if (this.puntajeGeneral === null || this.textoInvalido(this.oportunidades) || this.textoInvalido(this.recomendaciones)) {
+    // US06 escenario 2: si falta un criterio, no se envía y se resaltan los campos.
+    if (this.formulario.invalid) {
+      this.formulario.markAllAsTouched();
       this.error = 'Completa todos los campos de la rúbrica: porcentajes enteros entre 0 y 100 y los dos textos.';
       return;
     }
     if (this.enviando) return;
     this.enviando = true;
+    const valores = this.formulario.getRawValue();
     this.servicio.registrarEvaluacion({
       idSimulacion: this.idSimulacion,
-      seguridadRespuestas: this.seguridad!,
-      claridadRespuestas: this.claridad!,
-      dominioTema: this.dominio!,
-      oportunidadesMejora: this.oportunidades.trim(),
-      recomendaciones: this.recomendaciones.trim(),
+      seguridadRespuestas: Number(valores.seguridad),
+      claridadRespuestas: Number(valores.claridad),
+      dominioTema: Number(valores.dominio),
+      oportunidadesMejora: valores.oportunidades.trim(),
+      recomendaciones: valores.recomendaciones.trim(),
     }).subscribe({
       next: () => void this.router.navigate(['/evaluador/evaluaciones'], { queryParams: { registrada: this.idSimulacion } }),
       error: (respuesta: HttpErrorResponse) => {
