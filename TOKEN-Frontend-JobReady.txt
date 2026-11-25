@@ -1,0 +1,227 @@
+====================================================================================
+              JOBREADY - CÓMO FUNCIONA EL TOKEN DE SEGURIDAD (FRONTEND)
+====================================================================================
+
+Resumen corto
+-------------
+El frontend (Angular) usa un token JWT para demostrar al backend quién es el
+usuario. El token se obtiene al iniciar sesión, se guarda en el navegador
+(sessionStorage) y se envía automáticamente en cada petición a /api/.
+Además, unos "guards" impiden entrar a pantallas según el rol del usuario.
+
+
+------------------------------------------------------------------------------------
+1. ¿EN QUÉ CARPETA ESTÁ?
+------------------------------------------------------------------------------------
+
+Todo está en:
+
+    frontend/src/app/servicios/
+
+Archivos principales:
+
+    frontend/src/app/servicios/auth-service.ts     -> login, guardar/borrar token y roles
+    frontend/src/app/servicios/jwt-interceptor.ts  -> agrega el token a cada petición
+    frontend/src/app/servicios/rol-guard.ts        -> protege las rutas por sesión/rol
+
+Archivos donde se "conectan":
+
+    frontend/src/app/app.config.ts    -> registra el interceptor en HttpClient
+    frontend/src/app/app.routes.ts    -> asigna los guards a cada ruta
+    frontend/src/app/modelos/api-modelos.ts -> tipos AuthRequest y AuthResponse
+
+Archivos que lo usan:
+
+    frontend/src/app/componentes/ingresar-componente/ingresar-componente.ts  (login)
+    frontend/src/app/componentes/candidato-layout/candidato-layout.ts        (cerrar sesión)
+    frontend/src/app/componentes/panel-rol-layout/panel-rol-layout.ts        (cerrar sesión)
+    frontend/src/app/componentes/mi-panel-componente/mi-panel-componente.ts  (redirige por rol)
+
+
+------------------------------------------------------------------------------------
+2. ¿QUÉ ES EL TOKEN JWT?
+------------------------------------------------------------------------------------
+
+Un JWT (JSON Web Token) es un texto largo con tres partes separadas por puntos:
+
+    xxxxx.yyyyy.zzzzz
+    cabecera.datos.firma
+
+- Los "datos" llevan el nombre de usuario y la fecha de expiración.
+- La "firma" la crea el backend con una clave secreta (JWT_SECRET).
+  El frontend NO conoce esa clave: solo guarda el token y lo reenvía.
+- Si alguien modifica el token, la firma deja de coincidir y el backend lo rechaza.
+
+Es como una pulsera de un evento: te la dan en la entrada (login) y la muestras
+cada vez que quieres pasar a una zona (cada petición a la API).
+
+
+------------------------------------------------------------------------------------
+3. PASO 1: INICIAR SESIÓN Y GUARDAR EL TOKEN  (auth-service.ts)
+------------------------------------------------------------------------------------
+
+1. El usuario escribe usuario y contraseña en la pantalla /ingresar.
+2. ingresar-componente.ts llama a  AuthService.ingresar({ username, password }).
+3. AuthService hace:   POST /api/authenticate
+4. El backend responde (si los datos son correctos):
+
+       Cabecera:  Authorization: Bearer eyJhbGciOi...
+       Cuerpo:    { "roles": ["ROLE_CANDIDATO"] }
+
+   El token SOLO viaja en la cabecera Authorization. AuthService pide la
+   respuesta completa ({ observe: 'response' }), lee
+   headers.get('Authorization') y le quita el prefijo "Bearer ".
+   (El backend expone esa cabecera por CORS con exposedHeaders/addExposedHeader.)
+
+5. AuthService guarda en sessionStorage:
+
+       jobready.jwt     -> el token
+       jobready.roles   -> la lista de roles (en JSON)
+
+   y borra  jobready.usuario  (datos en caché de un usuario anterior).
+
+6. El componente de login redirige según el rol:
+
+       ROLE_ADMIN      -> /administracion
+       ROLE_EVALUADOR  -> /evaluador
+       ROLE_CANDIDATO  -> /panel
+       (ninguno)       -> /acceso-denegado
+
+¿Por qué sessionStorage?
+  - Se borra al cerrar la pestaña/navegador, así la sesión no queda abierta
+    para siempre en el equipo.
+  - Cada pestaña tiene su propio sessionStorage (abrir una pestaña nueva
+    pide iniciar sesión otra vez).
+
+
+------------------------------------------------------------------------------------
+4. PASO 2: ENVIAR EL TOKEN EN CADA PETICIÓN  (jwt-interceptor.ts)
+------------------------------------------------------------------------------------
+
+Un "interceptor" es una función que Angular ejecuta ANTES de que salga cada
+petición HTTP hecha con HttpClient. El de JobReady hace esto:
+
+    1. Lee el token de sessionStorage ('jobready.jwt').
+    2. Si no hay token, o la URL no contiene '/api/', deja la petición igual.
+    3. Si hay token, clona la petición y le agrega la cabecera:
+
+           Authorization: Bearer <token>
+
+Se registra una sola vez en app.config.ts:
+
+    provideHttpClient(withInterceptors([jwtInterceptor]))
+
+Gracias a esto, ningún servicio (preguntas, carreras, simulaciones, etc.)
+tiene que acordarse de poner el token: todo pasa por el interceptor.
+
+Caso especial: videos y PDF
+  Un <video src="..."> o un enlace <a href="..."> directo NO pasa por el
+  interceptor, así que iría sin token y el backend lo rechazaría.
+  Por eso esos archivos se descargan con HttpClient como Blob
+  (simulaciones-servicio.ts -> descargarArchivo) y luego se muestran con una
+  URL local del navegador. Ver candidato-historial.ts y candidato-resultados.ts.
+
+
+------------------------------------------------------------------------------------
+5. PASO 3: PROTEGER LAS PANTALLAS  (rol-guard.ts + app.routes.ts)
+------------------------------------------------------------------------------------
+
+Un "guard" decide si el usuario puede entrar a una ruta. Hay dos:
+
+  requiereSesion
+    - Solo comprueba que exista un token en sessionStorage.
+    - Si no hay, manda a /ingresar.
+    - Se usa en: /mi-panel
+
+  requiereRol('X')
+    - Si no hay token -> /ingresar
+    - Si hay token pero los roles guardados no incluyen 'ROLE_X'
+      -> /acceso-denegado
+    - Si todo bien -> deja entrar.
+
+Uso en app.routes.ts:
+
+    requiereRol('CANDIDATO') -> /panel, /entrevista, /historial, /comparaciones,
+                                /resultados, /organizar, /carreras, /satisfaccion
+    requiereRol('ADMIN')     -> /administracion y /administracion/...
+    requiereRol('EVALUADOR') -> /evaluador y /evaluador/...
+
+Rutas públicas (sin guard): /, /home, /preguntas, /ingresar, /registro,
+/nosotros, /planes, /novedades, /contacto, /acceso-denegado.
+
+
+------------------------------------------------------------------------------------
+6. PASO 4: CERRAR SESIÓN
+------------------------------------------------------------------------------------
+
+AuthService.cerrarSesion() borra de sessionStorage:
+
+    jobready.jwt, jobready.roles, jobready.usuario
+
+Lo llaman los botones de "Cerrar sesión" de candidato-layout.ts y
+panel-rol-layout.ts. Sin token, el interceptor ya no agrega la cabecera y los
+guards vuelven a mandar a /ingresar.
+
+Nota: el token en sí no se "anula" en el servidor (el sistema es sin estado).
+Simplemente el navegador lo olvida, y el token deja de servir cuando expira.
+
+
+------------------------------------------------------------------------------------
+7. MUY IMPORTANTE: LA SEGURIDAD REAL ESTÁ EN EL BACKEND
+------------------------------------------------------------------------------------
+
+Los guards del frontend son solo para la experiencia de usuario (no mostrar
+pantallas que no corresponden). Cualquiera podría editar sessionStorage desde
+las herramientas del navegador y escribir roles falsos.
+
+Eso NO le da acceso a datos, porque:
+  - El backend verifica la FIRMA del token en cada petición (JwtRequestFilter).
+  - El backend comprueba los roles por su cuenta (Spring Security).
+  - Los roles que el backend usa salen del usuario en la base de datos,
+    no de lo que el navegador diga.
+
+Es decir: el frontend "esconde puertas"; el backend es quien "las cierra".
+
+
+------------------------------------------------------------------------------------
+8. DIAGRAMA DEL RECORRIDO
+------------------------------------------------------------------------------------
+
+  [Pantalla /ingresar]
+        |  usuario + contraseña
+        v
+  AuthService.ingresar() ---- POST /api/authenticate ----> [Backend]
+        |                                                      |
+        |  <-- Authorization: Bearer <jwt> + { roles } ---------+
+        v
+  sessionStorage: jobready.jwt, jobready.roles
+        |
+        v
+  Navegar a /panel  --> rol-guard: ¿hay token? ¿tiene ROLE_CANDIDATO?  --> sí: entra
+        |
+        v
+  Componente pide datos: http.get('/api/...')
+        |
+        v
+  jwt-interceptor agrega  "Authorization: Bearer <token>"
+        |
+        v
+  [Backend] valida firma + expiración + rol  --> responde datos (o 401/403)
+
+
+------------------------------------------------------------------------------------
+9. LIMITACIONES ACTUALES (para tener en cuenta)
+------------------------------------------------------------------------------------
+
+- Los guards solo miran si EXISTE el token, no si ya expiró. Si expira, la
+  pantalla abre pero las peticiones a la API fallarán (401/403).
+- No hay un manejo global de 401: el usuario no es enviado automáticamente a
+  /ingresar cuando el token caduca; cada componente muestra su propio error.
+  Una mejora sería que el interceptor, al recibir 401, llame a cerrarSesion()
+  y redirija a /ingresar.
+- La clave 'jobready.jwt' está escrita en dos sitios (auth-service.ts y
+  jwt-interceptor.ts); si se cambia en uno hay que cambiarla en el otro.
+
+Para el detalle del lado del backend (BCrypt, firma, JwtRequestFilter, CORS,
+roles en Spring Security) ver el archivo SEGURIDAD-JobReady.txt en la raíz
+del proyecto.
