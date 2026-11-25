@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, Validators } from '@angular/forms';
@@ -47,6 +47,16 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
   protected idSimulacion = 0;
   protected simulacion: SimulacionDetalle | null = null;
   protected respuestas: RespuestaEntrevista[] = [];
+  /** Preguntas que el candidato vio durante la grabación, en orden y con su tramo del video. */
+  protected preguntasVideo: RespuestaEntrevista[] = [];
+  /** Respuestas escritas (prácticas anteriores al video con preguntas). */
+  protected respuestasTexto: RespuestaEntrevista[] = [];
+  /** Pregunta que corresponde al momento actual de reproducción. */
+  protected indiceActivo = -1;
+  @ViewChild('reproductor') private reproductor?: ElementRef<HTMLVideoElement>;
+  /** Mientras se calcula la duración de un WebM sin metadatos no se resalta ni se salta. */
+  private corrigiendoDuracion = false;
+  private saltoPendiente: number | null = null;
   protected cargando = true;
   protected enviando = false;
   protected error = '';
@@ -74,6 +84,10 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
     }).subscribe({
       next: ({ respuestas, simulaciones }) => {
         this.respuestas = respuestas;
+        // El backend ya las devuelve ordenadas por la posición en que se mostraron.
+        this.preguntasVideo = respuestas.filter((r) => r.segundoInicio != null && r.segundoFin != null);
+        this.respuestasTexto = respuestas.filter((r) => r.segundoInicio == null || r.segundoFin == null);
+        this.indiceActivo = this.preguntasVideo.length ? 0 : -1;
         this.simulacion = simulaciones.find((s) => s.idSimulacion === this.idSimulacion) ?? null;
         this.cargando = false;
         this.cargarVideo();
@@ -95,6 +109,61 @@ export class EvaluadorEvaluar implements OnInit, OnDestroy {
       },
       error: () => this.errorVideo = 'No se pudo consultar el video de la práctica.',
     });
+  }
+
+  /**
+   * Los WebM de MediaRecorder no traen la duración (Infinity) y el navegador no sabe saltar a un
+   * segundo concreto. Se fuerza a calcularla llevando el cursor al final y devolviéndolo al inicio.
+   */
+  protected alCargarMetadatos(): void {
+    const video = this.reproductor?.nativeElement;
+    if (!video || Number.isFinite(video.duration)) return;
+    this.corrigiendoDuracion = true;
+    const restaurar = () => {
+      video.removeEventListener('timeupdate', restaurar);
+      this.corrigiendoDuracion = false;
+      video.currentTime = this.saltoPendiente ?? 0;
+      if (this.saltoPendiente !== null) void video.play().catch(() => undefined);
+      this.saltoPendiente = null;
+    };
+    video.addEventListener('timeupdate', restaurar);
+    video.currentTime = Number.MAX_SAFE_INTEGER;
+  }
+
+  /** Resalta la pregunta cuyo tramo contiene el instante actual del video. */
+  protected alAvanzarVideo(): void {
+    const video = this.reproductor?.nativeElement;
+    if (!video || this.corrigiendoDuracion || !this.preguntasVideo.length) return;
+    this.indiceActivo = this.indicePara(video.currentTime);
+  }
+
+  private indicePara(segundo: number): number {
+    for (let i = this.preguntasVideo.length - 1; i >= 0; i--) {
+      if (segundo >= (this.preguntasVideo[i].segundoInicio ?? 0)) return i;
+    }
+    return 0;
+  }
+
+  /** Lleva el reproductor al momento en que comenzó la respuesta de la pregunta elegida. */
+  protected irAPregunta(indice: number): void {
+    const video = this.reproductor?.nativeElement;
+    const inicio = this.preguntasVideo[indice]?.segundoInicio;
+    if (!video || inicio == null) return;
+    this.indiceActivo = indice;
+    if (this.corrigiendoDuracion) {
+      this.saltoPendiente = inicio;
+      return;
+    }
+    video.currentTime = inicio;
+    void video.play().catch(() => undefined);
+  }
+
+  protected tramo(r: RespuestaEntrevista): string {
+    return `${this.mmss(r.segundoInicio ?? 0)} – ${this.mmss(r.segundoFin ?? 0)}`;
+  }
+
+  private mmss(total: number): string {
+    return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
   }
 
   /** Promedio en segundos de las respuestas; si la práctica es solo un video, su duración (el backend calcula lo mismo). */

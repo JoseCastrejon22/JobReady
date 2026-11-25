@@ -13,30 +13,67 @@
   @if (cargando) {
     <p class="empty" role="status">Cargando práctica…</p>
   } @else {
-    <div class="evaluate-grid">
+    @if (tieneVideo) {
+      <section class="box review" aria-labelledby="titulo-video">
+        <h2 class="box-title" id="titulo-video">Video de la entrevista</h2>
+        <div class="box-body review-layout">
+          <div class="review-player">
+            <p class="muted">Video enviado por el candidato · {{ simulacion?.duracionSegundos ?? '—' }} s</p>
+            @if (urlVideo) {
+              <video #reproductor class="candidate-video" [src]="urlVideo" controls playsinline preload="metadata"
+                     (loadedmetadata)="alCargarMetadatos()" (timeupdate)="alAvanzarVideo()" (seeked)="alAvanzarVideo()"></video>
+            }
+            @else if (errorVideo) { <p class="notice err" role="alert">{{ errorVideo }}</p> }
+            @else { <p class="muted" role="status">Cargando video…</p> }
+            <p class="muted">Tiempo promedio por respuesta: <strong>{{ tiempoPromedio }} s</strong> (se calcula automáticamente).</p>
+          </div>
+          <aside class="questions-panel" aria-labelledby="titulo-preguntas">
+            <h3 id="titulo-preguntas">Preguntas de la entrevista ({{ preguntasVideo.length }})</h3>
+            @if (preguntasVideo.length) {
+              <ol class="question-list">
+                @for (r of preguntasVideo; track r.idRespuesta; let i = $index) {
+                  <li>
+                    <button type="button" class="question-item" [class.active]="i === indiceActivo"
+                            [attr.aria-current]="i === indiceActivo ? 'true' : null"
+                            [disabled]="!urlVideo" (click)="irAPregunta(i)">
+                      <span class="q-num">{{ r.orden ?? i + 1 }}</span>
+                      <span class="q-body">
+                        <span class="q-text">{{ r.pregunta?.textoPregunta }}</span>
+                        <span class="q-meta">{{ tramo(r) }}@if (r.pregunta?.categoria) { · {{ r.pregunta?.categoria }} }</span>
+                      </span>
+                    </button>
+                  </li>
+                }
+              </ol>
+              <p class="muted small">Selecciona una pregunta para ir al momento en que comenzó su respuesta.</p>
+            } @else {
+              <p class="muted">Esta grabación se envió sin preguntas registradas.</p>
+            }
+          </aside>
+        </div>
+      </section>
+    }
+
+    <div class="evaluate-grid" [class.solo]="tieneVideo && !respuestasTexto.length">
+      @if (!tieneVideo || respuestasTexto.length) {
       <section class="box" aria-labelledby="titulo-respuestas">
-        <h2 class="box-title" id="titulo-respuestas">Respuestas del candidato ({{ respuestas.length }})</h2>
+        <h2 class="box-title" id="titulo-respuestas">Respuestas del candidato ({{ respuestasTexto.length }})</h2>
         <div class="box-body answers">
-          @if (tieneVideo) {
-            <article class="answer">
-              <p class="muted">Video enviado por el candidato · {{ simulacion?.duracionSegundos ?? '—' }} s</p>
-              @if (urlVideo) { <video class="candidate-video" [src]="urlVideo" controls playsinline></video> }
-              @else if (errorVideo) { <p class="notice err" role="alert">{{ errorVideo }}</p> }
-              @else { <p class="muted" role="status">Cargando video…</p> }
-            </article>
-          }
-          @for (r of respuestas; track r.idRespuesta; let i = $index) {
+          @for (r of respuestasTexto; track r.idRespuesta; let i = $index) {
             <article class="answer">
               <p class="muted">Pregunta {{ i + 1 }} · {{ r.pregunta?.categoria }} · {{ r.duracionSegundos ?? '—' }} s</p>
               <h3>{{ r.pregunta?.textoPregunta }}</h3>
               <p class="answer-text">{{ r.textoRespuesta || 'El candidato respondió en video; la transcripción no está disponible.' }}</p>
             </article>
           } @empty {
-            @if (!tieneVideo) { <p class="empty">Esta práctica no tiene respuestas registradas.</p> }
+            <p class="empty">Esta práctica no tiene respuestas registradas.</p>
           }
-          <p class="muted">Tiempo promedio por respuesta: <strong>{{ tiempoPromedio }} s</strong> (se calcula automáticamente).</p>
+          @if (!tieneVideo) {
+            <p class="muted">Tiempo promedio por respuesta: <strong>{{ tiempoPromedio }} s</strong> (se calcula automáticamente).</p>
+          }
         </div>
       </section>
+      }
 
       <section class="box" aria-labelledby="titulo-rubrica">
         <h2 class="box-title" id="titulo-rubrica">Rúbrica de evaluación</h2>

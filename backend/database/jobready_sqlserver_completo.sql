@@ -283,6 +283,15 @@ BEGIN
 END;
 GO
 
+/* Preguntas mostradas durante la grabacion: posicion y tramo del video (segundos). */
+IF COL_LENGTH(N'dbo.respuestas_entrevista', N'orden') IS NULL
+    ALTER TABLE dbo.respuestas_entrevista ADD orden INT NULL;
+IF COL_LENGTH(N'dbo.respuestas_entrevista', N'segundo_inicio') IS NULL
+    ALTER TABLE dbo.respuestas_entrevista ADD segundo_inicio INT NULL;
+IF COL_LENGTH(N'dbo.respuestas_entrevista', N'segundo_fin') IS NULL
+    ALTER TABLE dbo.respuestas_entrevista ADD segundo_fin INT NULL;
+GO
+
 /* INDICES PARA LAS CLAVES FORANEAS Y CONSULTAS HABITUALES */
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_usuarios_id_rol' AND object_id = OBJECT_ID(N'dbo.usuarios'))
     CREATE INDEX IX_usuarios_id_rol ON dbo.usuarios(id_rol);

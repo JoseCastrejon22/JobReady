@@ -2,6 +2,7 @@ package com.jobready.web.controladores;
 
 import com.jobready.web.entidades.Simulacion;
 import com.jobready.web.dtos.EnvioEntrevistaDTO;
+import com.jobready.web.dtos.PreguntaRespondidaDTO;
 import com.jobready.web.dtos.SimulacionDTO;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -57,15 +58,19 @@ public class SimulacionController {
         return simulacionServicio.listarEnviosPorUsuario(authentication.getName());
     }
 
-    /** El candidato envía la grabación de su entrevista para que un evaluador la revise. */
+    /**
+     * El candidato envía la grabación de su entrevista para que un evaluador la revise. La parte
+     * opcional "preguntas" (JSON) indica qué preguntas vio, en qué orden y en qué tramo del video.
+     */
     @PostMapping(value = "/simulacion/enviar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('CANDIDATO')")
     @ResponseStatus(HttpStatus.CREATED)
     public EnvioEntrevistaDTO enviar(@RequestParam("video") MultipartFile video,
                                      @RequestParam("idCarrera") Integer idCarrera,
                                      @RequestParam("duracionSegundos") Integer duracionSegundos,
+                                     @RequestPart(value = "preguntas", required = false) List<PreguntaRespondidaDTO> preguntas,
                                      Authentication authentication) {
-        return simulacionServicio.enviarEntrevista(authentication.getName(), idCarrera, duracionSegundos, video);
+        return simulacionServicio.enviarEntrevista(authentication.getName(), idCarrera, duracionSegundos, video, preguntas);
     }
 
     /** Revisiones pendientes: el administrador elimina la entrevista enviada y su video. */

@@ -40,3 +40,9 @@ CREATE INDEX IF NOT EXISTS idx_respuestas_simulacion
 
 CREATE INDEX IF NOT EXISTS idx_respuestas_pregunta
     ON respuestas_entrevista(id_pregunta);
+
+-- Preguntas mostradas durante la grabacion del video: posicion y tramo del video (segundos)
+-- en que el candidato respondio cada una. Columnas opcionales: las respuestas anteriores quedan en NULL.
+ALTER TABLE respuestas_entrevista ADD COLUMN IF NOT EXISTS orden INTEGER;
+ALTER TABLE respuestas_entrevista ADD COLUMN IF NOT EXISTS segundo_inicio INTEGER;
+ALTER TABLE respuestas_entrevista ADD COLUMN IF NOT EXISTS segundo_fin INTEGER;

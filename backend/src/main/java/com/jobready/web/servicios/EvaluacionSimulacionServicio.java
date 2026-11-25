@@ -113,7 +113,7 @@ public class EvaluacionSimulacionServicio implements Serializable {
                 .intValue();
     }
 
-    /** Promedio de duración de las respuestas escritas; si la práctica es solo un video, su duración. */
+    /** Promedio de duración de las respuestas (por pregunta en el video); si no hay tramos, la duración del video. */
     private BigDecimal calcularTiempoPromedio(Simulacion simulacion) {
         double promedio = respuestaEntrevistaRepositorio.findBySimulacion_IdSimulacion(simulacion.getIdSimulacion())
                 .stream()
