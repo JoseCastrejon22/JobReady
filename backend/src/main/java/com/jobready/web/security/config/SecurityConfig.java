@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -45,7 +46,9 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http.csrf(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/authenticate", "/api/registro", "/api/recuperar-contrasena/**", "/swagger-ui.html", "/swagger-ui/**",
+                        .requestMatchers(HttpMethod.POST, "/api/auth/recuperar-password",
+                                "/api/auth/restablecer-password").permitAll()
+                        .requestMatchers("/api/authenticate", "/api/registro", "/swagger-ui.html", "/swagger-ui/**",
                                 "/v3/api-docs/**", "/error").permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(session ->

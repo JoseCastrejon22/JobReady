@@ -3,8 +3,7 @@ import { HomeComponente } from './componentes/home-componente/home-componente';
 import { PreguntasComponente } from './componentes/preguntas-componente/preguntas-componente';
 import { IngresarComponente } from './componentes/ingresar-componente/ingresar-componente';
 import { RegistroComponente } from './componentes/registro-componente/registro-componente';
-import { RecuperarContrasena } from './componentes/recuperar-contrasena/recuperar-contrasena';
-import { RestablecerContrasena } from './componentes/restablecer-contrasena/restablecer-contrasena';
+import { RecuperacionPasswordComponente } from './componentes/recuperacion-password-componente/recuperacion-password-componente';
 import { HistorialComponent } from './componentes/historial-component/historial-component';
 import { NosotrosComponente } from './componentes/nosotros-componente/nosotros-componente';
 import { PlanesComponente } from './componentes/planes-componente/planes-componente';
@@ -37,8 +36,8 @@ export const routes: Routes = [
   { path: 'preguntas', component: PreguntasComponente },
   { path: 'ingresar', component: IngresarComponente },
   { path: 'registro', component: RegistroComponente },
-  { path: 'recuperar-contrasena', component: RecuperarContrasena },
-  { path: 'restablecer-contrasena', component: RestablecerContrasena },
+  { path: 'recuperar-password', component: RecuperacionPasswordComponente },
+  { path: 'restablecer-password', component: RecuperacionPasswordComponente, data: { restablecer: true } },
   { path: 'nosotros', component: NosotrosComponente },
   { path: 'planes', component: PlanesComponente },
   { path: 'novedades', component: NovedadesComponente },

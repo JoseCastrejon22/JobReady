@@ -31,17 +31,12 @@ export class AuthService {
     return this.http.post(`${API_BASE_URL}/registro`, datos);
   }
 
-  /** Envía el enlace de recuperación al correo; la respuesta es la misma exista o no la cuenta. */
-  solicitarRecuperacion(email: string): Observable<{ mensaje: string }> {
-    return this.http.post<{ mensaje: string }>(`${API_BASE_URL}/recuperar-contrasena`, { email });
+  recuperarPassword(email: string): Observable<void> {
+    return this.http.post<void>(`${API_BASE_URL}/auth/recuperar-password`, { email });
   }
 
-  validarEnlaceRecuperacion(token: string): Observable<void> {
-    return this.http.post<void>(`${API_BASE_URL}/recuperar-contrasena/validar`, { token });
-  }
-
-  restablecerContrasena(token: string, password: string): Observable<void> {
-    return this.http.post<void>(`${API_BASE_URL}/recuperar-contrasena/restablecer`, { token, password });
+  restablecerPassword(token: string, password: string): Observable<void> {
+    return this.http.post<void>(`${API_BASE_URL}/auth/restablecer-password`, { token, password });
   }
 
   cerrarSesion(): void {
