@@ -148,6 +148,25 @@ WHERE c.nombre IN (
         AND p.texto_pregunta = q.texto_pregunta
   );
 
+-- Software y Sistemas completan 5 preguntas propias: una entrevista completa (5 preguntas) sin repetir.
+INSERT INTO preguntas_entrevista
+    (id_carrera, texto_pregunta, categoria, nivel_dificultad, activo, fecha_creacion)
+SELECT c.id_carrera, q.texto_pregunta, q.categoria, q.nivel_dificultad, TRUE, CURRENT_TIMESTAMP
+FROM carreras c
+JOIN (
+    VALUES
+        ('Ingenieria de Software', 'Como aseguras la calidad de tu codigo antes de entregarlo (pruebas, revisiones, buenas practicas)?', 'Tecnica', 'Intermedio'),
+        ('Sistemas y Computo', 'Como diagnosticarias un servidor o servicio que dejo de responder en produccion?', 'Tecnica', 'Intermedio'),
+        ('Sistemas y Computo', 'Que medidas aplicarias para proteger una red o un sistema frente a accesos no autorizados?', 'Tecnica', 'Avanzado'),
+        ('Sistemas y Computo', 'Cuentanos una ocasion en la que tuviste que explicar un problema tecnico a un usuario no tecnico.', 'Comunicacion', 'Basico')
+) AS q(carrera, texto_pregunta, categoria, nivel_dificultad) ON q.carrera = c.nombre
+WHERE NOT EXISTS (
+      SELECT 1
+      FROM preguntas_entrevista p
+      WHERE p.id_carrera = c.id_carrera
+        AND p.texto_pregunta = q.texto_pregunta
+  );
+
 INSERT INTO simulaciones
     (id_usuario, id_carrera, numero_simulacion, fecha_inicio, fecha_fin,
      duracion_segundos, estado)
